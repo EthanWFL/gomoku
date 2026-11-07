@@ -2,14 +2,22 @@
 from pathlib import Path
 from statistics import mean
 import json
+import os
+import sys
 import tempfile
 
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
+# 默认有界面（与此前一致）；GOMOKU_HEADLESS=1 或 --headless 切换为无界面。
+HEADLESS = "--headless" in sys.argv[1:] or os.environ.get("GOMOKU_HEADLESS", "").lower() in ("1", "true", "yes")
+
+# 计时断言的放宽倍数：默认 1（本地阈值不变）；共享 CI 机器可设 GOMOKU_TIMING_SLACK=3 等。
+# 只放宽“耗时上限”类断言；功能性与可见性断言不受影响。
+SLACK = float(os.environ.get("GOMOKU_TIMING_SLACK", "1"))
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
+    browser = p.chromium.launch(headless=HEADLESS)
     page = browser.new_page(viewport={"width": 1024, "height": 1100}, device_scale_factor=2)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -21,7 +29,7 @@ with sync_playwright() as p:
     print("内联规则与AI自检：", page.evaluate("runSelfChecks()"), flush=True)
 
     # 取消：搜索进行中通过 signal 终止 Worker，必须很快以 cancelled 返回；另测预先中止与主线程回退。
-    cancellation = page.evaluate("""async () => {
+    cancellation = page.evaluate("""async (slack) => {
       const board = rules.newGame().board;
       for (const [r, c, k] of [[7,7,1],[7,8,2],[8,8,1],[6,6,2],[8,7,1],[9,7,2],[6,8,1],[8,6,2],[9,9,1],[10,10,2]]) board[r][c] = k;
       const controller = new AbortController();
@@ -30,7 +38,7 @@ with sync_playwright() as p:
       setTimeout(() => controller.abort(), 80);
       const reply = await pending;
       const elapsed = performance.now() - started;
-      if (!reply.cancelled || reply.move !== null || elapsed > 400) throw new Error('未在搜索中取消');
+      if (!reply.cancelled || reply.move !== null || elapsed > 400 * slack) throw new Error('未在搜索中取消');
       const pre = new AbortController(); pre.abort();
       const early = await ai.chooseMove(board, 1, pre.signal, 'high');
       if (!early.cancelled || early.move !== null) throw new Error('预先取消无效');
@@ -41,7 +49,7 @@ with sync_playwright() as p:
         if (fb.cancelled || !fb.move || board[fb.move.r][fb.move.c]) throw new Error('主线程回退失败');
       } finally { ai.settings.worker = saved; }
       return { elapsedMs: elapsed };
-    }""")
+    }""", SLACK)
     print("计算中取消：", cancellation, flush=True)
 
     # 固定种子、合法前缀、不同密度；不包含生成局面与断言耗时。
@@ -138,7 +146,7 @@ with sync_playwright() as p:
               for key in ("computeMs", "totalMs", "elapsedMs")}
     print("前台性能：", json.dumps({"samples": len(samples), **timing}, ensure_ascii=False), flush=True)
     budget = {"low": 80, "mid": 500, "high": 1500}
-    over_budget = [s for s in samples if s["elapsedMs"] >= budget[s["level"]] + 400]
+    over_budget = [s for s in samples if s["elapsedMs"] >= (budget[s["level"]] + 400) * SLACK]
     assert len(samples) >= 100 and not over_budget, (timing, over_budget[:3])
     by_level = {lv: round(max(s["elapsedMs"] for s in samples if s["level"] == lv), 1)
                 for lv in budget if any(s["level"] == lv for s in samples)}
@@ -484,7 +492,7 @@ with sync_playwright() as p:
 
     assert not errors, errors
     report = {"browser": browser.version, "userAgent": performance_report["userAgent"],
-              "headless": False, "visibility": "visible", "dpr": 2, "timing": timing,
+              "headless": HEADLESS, "visibility": "visible", "dpr": 2, "timing": timing,
               "samples": samples, "pageErrors": errors, "checks": "全部通过"}
     output = ROOT / "tests" / "gomoku-results.json"
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

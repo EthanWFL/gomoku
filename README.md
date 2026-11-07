@@ -36,7 +36,17 @@ playwright install chromium
 python3 tests/gomoku.py
 ```
 
-脚本会启动有界面的 Chromium，并在 `tests/gomoku-results.json` 中写出报告，该文件已被 `.gitignore` 忽略。
+默认会启动有界面的 Chromium。设置环境变量 `GOMOKU_HEADLESS=1`（或加 `--headless` 参数）可改为无界面运行：
+
+```bash
+GOMOKU_HEADLESS=1 python3 tests/gomoku.py
+```
+
+耗时类断言（取消响应、各档 AI 用时上限）可用 `GOMOKU_TIMING_SLACK` 按倍数放宽，默认 1；性能较弱或负载较高的机器可设为 2、3。
+
+报告写入 `tests/gomoku-results.json`，该文件已被 `.gitignore` 忽略。
+
+仓库带有 GitHub Actions 工作流（`.github/workflows/test.yml`）：推送或向 `main` 提 PR 时，会在 ubuntu-latest 上以无界面模式运行这套回归，并将 `GOMOKU_TIMING_SLACK` 设为 3。
 
 ## 代码结构
 
