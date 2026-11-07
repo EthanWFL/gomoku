@@ -1,0 +1,2049 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>五子棋</title>
+  <style>
+    /* UX: 页面外壳颜色变量；深色模式只改外壳，棋盘木色不变 */
+    :root {
+      color-scheme: light dark;
+      --page: #f4f0e8; --ink: #342c20; --muted: #74644e; --line: #ddd1bd; --line2: #b7a58a;
+      --control: #fffaf1; --control-hover: #eee2cf; --panel: #fffaf2; --on: #e6d3b0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #1d1a16; --ink: #e9e1d3; --muted: #b3a58f; --line: #3d352b; --line2: #6b5d49;
+        --control: #2b251e; --control-hover: #3a3228; --panel: #26211b; --on: #4a3c2a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--page);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    /* UX: 去掉 480px 最小宽度；宽度不超过视口，窄屏随之缩小 */
+    main { width: min(var(--board-width, 640px), calc(100% - 32px)); margin: 24px auto; }
+    header, .toolbar, .status, .turn { display: flex; align-items: center; gap: 12px; }
+    header, .toolbar { justify-content: space-between; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 28px; letter-spacing: 4px; }
+    header label { font-size: 14px; white-space: nowrap; }
+    .subtitle { margin: 8px 0 20px; color: var(--muted); font-size: 14px; }
+    select, button {
+      min-height: 44px; /* UX: 触控目标至少 44px */
+      padding: 8px 14px;
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      font: inherit;
+      color: inherit;
+      background: var(--control);
+    }
+    select { margin-left: 8px; }
+    button, select { cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--control-hover); }
+    button.primary { color: #fff; background: #5e4830; border-color: #5e4830; }
+    button.primary:hover { background: #735b3e; }
+    button:disabled, select:disabled { cursor: not-allowed; opacity: .5; }
+    :focus-visible { outline: 3px solid #98642e; outline-offset: 4px; }
+    .status {
+      justify-content: space-between;
+      flex-wrap: wrap;
+      min-height: 78px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      font-size: 14px;
+    }
+    .turn { gap: 8px; }
+    .swatch { width: 19px; height: 19px; border-radius: 50%; border: 1px solid #514b43; background: #222; }
+    .swatch.white { background: #fff; border-color: #aaa; }
+    #result { width: 100%; color: var(--muted); }
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background: #c8a96a;
+      box-shadow: 0 8px 24px #49351820;
+      touch-action: none; /* UX: 棋盘内不触发缩放与滚动 */
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .toolbar { margin-top: 16px; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+    .hint { margin: 14px 0 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
+    /* UX: 新增控件样式与窄屏布局 */
+    [hidden] { display: none !important; }
+    button[aria-pressed='true'] { background: var(--on); border-color: #98642e; }
+    button.confirm { color: #fff; background: #98642e; border-color: #98642e; }
+    @media (max-width: 640px) {
+      main { margin: 10px auto 16px; }
+      header { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+      h1 { grid-column: 1 / -1; font-size: 24px; }
+      header label { display: flex; flex-direction: column; gap: 4px; min-width: 0; white-space: normal; }
+      header select { width: 100%; margin-left: 0; }
+      .subtitle { margin: 6px 0 10px; }
+      .status { min-height: 0; padding: 10px 12px; margin-bottom: 10px; gap: 6px 12px; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .buttons { display: grid; grid-template-columns: repeat(3, 1fr); }
+      button { padding: 8px 6px; }
+    }
+    /* ===== 复盘 / 棋谱 / 分享（新增，自成一块，选择器均限定在新元素上；[hidden] 规则已由 UX 块提供） ===== */
+    .replay { margin-top: 16px; }
+    .replay-actions { flex-wrap: wrap; }
+    .replay-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid #ddd1bd; border-radius: 10px; background: #fffaf2; }
+    .replay-bar input[type="range"] { flex: 1 1 160px; min-width: 120px; min-height: 40px; accent-color: #5e4830; }
+    #rp-count { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
+    .replay button[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+    .replay button[aria-disabled="true"]:hover { background: #fffaf1; }
+    .replay button[aria-pressed="true"] { background: #eee2cf; border-color: #5e4830; }
+    .io-box { display: grid; gap: 8px; margin-top: 12px; font-size: 14px; }
+    .io-box textarea { width: 100%; min-height: 96px; padding: 8px 10px; border: 1px solid #b7a58a; border-radius: 8px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; color: inherit; background: #fffaf1; resize: vertical; }
+    .io-box .buttons { flex-wrap: wrap; align-items: center; }
+    .file-pick input { max-width: 220px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>五子棋</h1>
+      <label>对战模式
+        <select id="mode">
+          <option value="pvp">双人对战</option>
+          <option value="ai">人机对战</option>
+        </select>
+      </label>
+      <label>难度
+        <select id="level">
+          <option value="low">低</option>
+          <option value="mid" selected>中</option>
+          <option value="high">高</option>
+        </select>
+      </label>
+      <!-- UX: 人机对战执子选择 -->
+      <label>执子
+        <select id="side">
+          <option value="black" selected>执黑</option>
+          <option value="white">执白</option>
+        </select>
+      </label>
+      <label>棋盘路数
+        <select id="size">
+          <option value="13">13 × 13</option>
+          <option value="15" selected>15 × 15</option>
+          <option value="19">19 × 19</option>
+        </select>
+      </label>
+      <!-- [规则选项] 规则选择器：切换会重新开局，与路数选择器一致 -->
+      <label>规则
+        <select id="rule">
+          <option value="free" selected>无禁手</option>
+          <option value="renju">连珠禁手</option>
+        </select>
+      </label>
+      <label>显示尺寸
+        <select id="zoom">
+          <option value="480">小 · 480像素</option>
+          <option value="560">中 · 560像素</option>
+          <option value="640" selected>大 · 640像素</option>
+        </select>
+      </label>
+    </header>
+    <p class="subtitle" id="subtitle">黑棋先行 · 无禁手 · 五子及以上即胜 · 13／15／19 路可选</p>
+    <section class="status" role="status" aria-live="polite" aria-atomic="true">
+      <div class="turn">
+        <span id="turn-label">当前执子</span>
+        <span id="swatch" class="swatch" aria-hidden="true"></span>
+        <strong id="turn-text">黑棋</strong>
+      </div>
+      <div>已下 <strong id="steps">0</strong> 步</div>
+      <div id="result">对局进行中</div>
+    </section>
+    <canvas id="board" width="640" height="640" tabindex="0" role="application"
+      aria-label="五子棋棋盘" aria-describedby="instructions">浏览器不支持画布，请使用现代浏览器。</canvas>
+    <div class="toolbar">
+      <span id="mode-hint">双方轮流落子</span>
+      <div class="buttons">
+        <button id="undo" type="button" disabled>悔棋</button>
+        <!-- UX: 重做、提示、触屏确认、显示手数、音效 -->
+        <button id="redo" type="button" disabled>重做</button>
+        <button id="hint-btn" type="button" disabled>提示</button>
+        <button id="confirm" type="button" class="confirm" hidden>确认落子</button>
+        <button id="numbers" type="button" aria-pressed="false">显示手数</button>
+        <button id="sound" type="button" aria-pressed="false">音效</button>
+        <button id="restart" type="button" class="primary">重开</button>
+      </div>
+    </div>
+    <!-- ===== 复盘 / 棋谱 / 分享（新增区块；id 均以 replay- / rp- / io- 开头，另有 export、import-open、share） ===== -->
+    <section id="replay-panel" class="replay" aria-label="复盘与棋谱">
+      <div class="buttons replay-actions">
+        <button id="replay-toggle" type="button" aria-pressed="false" disabled>复盘</button>
+        <button id="export" type="button" disabled>导出</button>
+        <button id="import-open" type="button" aria-expanded="false" aria-controls="io-box">导入</button>
+        <button id="share" type="button" disabled>复制链接</button>
+      </div>
+      <div id="replay-bar" class="replay-bar" role="group" aria-label="复盘控制，可用左右方向键切换步数" hidden>
+        <button id="rp-first" type="button">首步</button>
+        <button id="rp-prev" type="button">上一步</button>
+        <input id="rp-slider" type="range" min="0" max="0" step="1" value="0" aria-label="复盘步数">
+        <button id="rp-next" type="button">下一步</button>
+        <button id="rp-last" type="button">末步</button>
+        <span id="rp-count" aria-hidden="true">0 / 0</span>
+        <button id="rp-branch" type="button" class="primary">从此处继续</button>
+        <button id="rp-exit" type="button">退出复盘</button>
+      </div>
+      <div id="io-box" class="io-box" hidden>
+        <label for="io-text">棋谱 JSON（粘贴后点“导入棋谱”）</label>
+        <textarea id="io-text" spellcheck="false"></textarea>
+        <div class="buttons">
+          <button id="io-apply" type="button">导入棋谱</button>
+          <label class="file-pick">或选择文件 <input id="io-file" type="file" accept=".json,application/json"></label>
+          <button id="io-download" type="button">下载 .json</button>
+          <button id="io-close" type="button">关闭</button>
+        </div>
+      </div>
+    </section>
+    <p id="instructions" class="hint">
+      移动鼠标预览，点击交叉点落子；也可用方向键选择，回车或空格落子。<br>
+      显示尺寸只改画面，保留棋局；切换路数、规则或对战模式会重新开局。难度影响电脑的下一手。
+      人机悔棋撤销最近一轮：电脑落子前退一步，落子后退两步。终局后只能重开。触屏先点一下预览、再点同一点（或按“确认落子”）落子。刷新会接着当前对局（已结束的除外）。
+    </p>
+  </main>
+  <script>
+    "use strict";
+
+    // 第一层：规则。所有状态变更都返回新对象，不修改传入的棋盘。
+    const rules = (() => {
+      const SIZE = 15, BLACK = 1, WHITE = 2, SIZES = [13, 15, 19];
+      const DIRECTIONS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+      // 棋盘边长取自棋盘本身，13／15／19 路共用同一套规则。
+      const inBoard = (board, r, c) => Number.isInteger(r) && Number.isInteger(c) &&
+        r >= 0 && r < board.length && c >= 0 && c < board.length;
+      const ended = state => state.winner !== 0 || state.draw;
+
+      function newGame(size = SIZE, rule = "free") {
+        return {
+          board: Array.from({ length: size }, () => Array(size).fill(0)),
+          turn: BLACK, history: [], winner: 0, draw: false, winLine: [],
+          rule: rule === "renju" ? "renju" : "free" // [规则选项] "free" 无禁手 / "renju" 连珠禁手
+        };
+      }
+
+      // 中心既可为已有棋子，也可为假想落点；判胜与电脑评估共用此函数。
+      function shape(board, r, c, dr, dc, color) {
+        if (!inBoard(board, r, c) || (board[r][c] !== 0 && board[r][c] !== color)) return null;
+        let negative = 0, positive = 0;
+        let nr = r - dr, nc = c - dc;
+        while (inBoard(board, nr, nc) && board[nr][nc] === color) {
+          negative++;
+          nr -= dr;
+          nc -= dc;
+        }
+        let openEnds = inBoard(board, nr, nc) && board[nr][nc] === 0 ? 1 : 0;
+        nr = r + dr;
+        nc = c + dc;
+        while (inBoard(board, nr, nc) && board[nr][nc] === color) {
+          positive++;
+          nr += dr;
+          nc += dc;
+        }
+        if (inBoard(board, nr, nc) && board[nr][nc] === 0) openEnds++;
+        const count = negative + positive + 1;
+        if (count >= 5) return { count, negative, openEnds, kind: "连五" };
+
+        // 只匹配包含中心的局部窗口；边界和对手都是阻挡，不试走后续回合。
+        const cells = [];
+        for (let offset = -4; offset <= 4; offset++) {
+          const row = r + offset * dr, col = c + offset * dc;
+          cells.push(offset === 0 ? 1 : !inBoard(board, row, col) ? -1 :
+            board[row][col] === color ? 1 : board[row][col] === 0 ? 0 : -1);
+        }
+        let most = 0, winningSpots = 0;
+        for (let start = 0; start <= 4; start++) {
+          let stones = 0, empty = -1, blocked = false;
+          for (let i = start; i < start + 5; i++) {
+            if (cells[i] === -1) { blocked = true; break; }
+            if (cells[i] === 1) stones++;
+            else empty = i;
+          }
+          if (blocked) continue;
+          most = Math.max(most, stones);
+          if (stones === 4) winningSpots |= 1 << empty;
+        }
+        // 两端为空、内部四格能补成连续四子，才具有活三／活二的发展空间。
+        let openCore = 0;
+        for (let start = 0; start <= 3; start++) {
+          if (cells[start] !== 0 || cells[start + 5] !== 0) continue;
+          let stones = 0, blocked = false;
+          for (let i = start + 1; i < start + 5; i++) {
+            if (cells[i] === -1) { blocked = true; break; }
+            stones += cells[i];
+          }
+          if (!blocked) openCore = Math.max(openCore, stones);
+        }
+        let kind = "其他";
+        if (winningSpots & (winningSpots - 1)) kind = "活四";
+        else if (winningSpots) kind = count === 4 ? "冲四" : "跳四";
+        else if (openCore === 3) kind = count === 3 ? "活三" : "跳三";
+        else if (most === 3) kind = "眠三";
+        else if (openCore === 2) kind = "活二";
+        else if (most === 2) kind = "眠二";
+        return { count, negative, openEnds, kind };
+      }
+
+      function winningLine(board, r, c, color, rule = "free") {
+        // [规则选项] 连珠规则下黑棋只有恰好五连才算胜；白棋与无禁手规则仍是五连及以上。
+        const renjuBlack = rule === "renju" && color === BLACK;
+        for (const [dr, dc] of DIRECTIONS) {
+          const line = shape(board, r, c, dr, dc, color);
+          if (line && (renjuBlack ? line.count === 5 : line.count >= 5)) {
+            // 长连也胜，只高亮包含最后一手的连续五子。
+            const back = Math.min(line.negative, 4);
+            const points = [];
+            for (let i = 0; i < 5; i++) points.push({
+              r: r + (i - back) * dr, c: c + (i - back) * dc
+            });
+            return points;
+          }
+        }
+        return [];
+      }
+
+      // ===== [规则选项] 连珠禁手（只限黑棋）=====
+      // 判定全部只读 board / turn（以及可选的 rule），供电脑层直接调用；缺省 rule 按 renju 处理。
+      const RENJU_DEPTH = 3; // 递归判断“成活四的点本身是否禁手”的深度上限
+      const ruleOf = state => state.rule === undefined ? "renju" : state.rule;
+      const stoneAt = (b, r, c) => inBoard(b, r, c) ? b[r][c] : -1; // -1 表示界外
+
+      // 经过 (r,c) 的连续黑子数，(r,c) 必须已是黑子。
+      function runOf(b, r, c, dr, dc) {
+        let neg = 0, pos = 0;
+        while (stoneAt(b, r - (neg + 1) * dr, c - (neg + 1) * dc) === BLACK) neg++;
+        while (stoneAt(b, r + (pos + 1) * dr, c + (pos + 1) * dc) === BLACK) pos++;
+        return { neg, pos, count: neg + pos + 1 };
+      }
+
+      // 这个方向上、含 (r,c) 的“四”的个数：五格窗口里恰有四子加一空，且补空后恰好五连。
+      // 用四颗黑子的位置去重：活四 .XXXX. 的两个补点算一个四，XX.XX.XX 的两个补点是两个四。
+      function fourCount(b, r, c, dr, dc) {
+        const sets = new Set();
+        for (let start = -4; start <= 0; start++) {
+          let mask = 0, stones = 0, empty = null, bad = false;
+          for (let i = 0; i < 5; i++) {
+            const k = start + i, rr = r + k * dr, cc = c + k * dc, v = stoneAt(b, rr, cc);
+            if (v === BLACK) { stones++; mask |= 1 << (k + 4); }
+            else if (v === 0) empty = [rr, cc];
+            else { bad = true; break; }
+          }
+          if (bad || stones !== 4 || !empty) continue;
+          b[empty[0]][empty[1]] = BLACK;
+          const exact = runOf(b, empty[0], empty[1], dr, dc).count === 5; // 补出长连的不算四
+          b[empty[0]][empty[1]] = 0;
+          if (exact) sets.add(mask);
+        }
+        return sets.size;
+      }
+
+      // q 已落黑子：是否形成真正的活四（恰好四连、两端为空、补任一端都恰好五连），且包含本手 (pr,pc)。
+      function isOpenFour(b, qr, qc, pr, pc, dr, dc) {
+        const run = runOf(b, qr, qc, dr, dc);
+        if (run.count !== 4) return false;
+        const t = dr !== 0 ? (pr - qr) / dr : (pc - qc) / dc;
+        if (!Number.isInteger(t) || pr !== qr + t * dr || pc !== qc + t * dc || t < -run.neg || t > run.pos) return false;
+        for (const side of [-1, 1]) {
+          const reach = side < 0 ? run.neg : run.pos;
+          const er = qr + side * (reach + 1) * dr, ec = qc + side * (reach + 1) * dc;
+          if (stoneAt(b, er, ec) !== 0) return false;
+          if (stoneAt(b, er + side * dr, ec + side * dc) === BLACK) return false; // 补端点会成长连
+        }
+        return true;
+      }
+
+      // 本手在这个方向上是否构成真活三：存在一个点，落黑后成真活四，且该点自己不是禁手。
+      function hasOpenThree(b, r, c, dr, dc, depth) {
+        for (let k = -4; k <= 4; k++) {
+          const qr = r + k * dr, qc = c + k * dc;
+          if (stoneAt(b, qr, qc) !== 0) continue;
+          b[qr][qc] = BLACK;
+          const open = isOpenFour(b, qr, qc, r, c, dr, dc);
+          b[qr][qc] = 0;
+          // 深度到顶不再递归，按活三计；否则成活四的点若是禁手，这个三就是假活三。
+          if (open && (depth >= RENJU_DEPTH || scanForbidden(b, qr, qc, depth + 1) === "")) return true;
+        }
+        return false;
+      }
+
+      // 假设黑棋落在 (r,c)（空点），返回 "长连" / "四四" / "三三" / ""。会临时改 b，返回前复原。
+      function scanForbidden(b, r, c, depth) {
+        b[r][c] = BLACK;
+        try {
+          let overline = false;
+          for (const [dr, dc] of DIRECTIONS) {
+            const n = runOf(b, r, c, dr, dc).count;
+            if (n === 5) return ""; // 恰好五连优先，不受任何禁手限制
+            if (n >= 6) overline = true;
+          }
+          if (overline) return "长连";
+          let fours = 0;
+          for (const [dr, dc] of DIRECTIONS) fours += fourCount(b, r, c, dr, dc);
+          if (fours >= 2) return "四四";
+          let threes = 0;
+          for (const [dr, dc] of DIRECTIONS) if (hasOpenThree(b, r, c, dr, dc, depth)) threes++;
+          return threes >= 2 ? "三三" : "";
+        } finally {
+          b[r][c] = 0;
+        }
+      }
+
+      // 禁手类型；白棋、非连珠规则、越界和已占用的点都返回空串。不修改传入状态。
+      function forbiddenKind(state, r, c) {
+        if (ruleOf(state) !== "renju" || state.turn !== BLACK) return "";
+        if (!inBoard(state.board, r, c) || state.board[r][c] !== 0) return "";
+        return scanForbidden(state.board.map(row => row.slice()), r, c, 0);
+      }
+      const isForbidden = (state, r, c) => forbiddenKind(state, r, c) !== "";
+
+      // 落子被拒的原因："ended" / "outside" / "occupied" / "forbidden"；可落则为 null。
+      function rejectReason(state, r, c) {
+        if (ended(state)) return "ended";
+        if (!inBoard(state.board, r, c)) return "outside";
+        if (state.board[r][c] !== 0) return "occupied";
+        return isForbidden(state, r, c) ? "forbidden" : null;
+      }
+
+      // 当前局面黑棋所有禁手点 [{r, c, kind}]；只检查四格内有黑子的空点，复制一次棋盘。
+      function forbiddenPoints(state) {
+        const points = [];
+        if (ruleOf(state) !== "renju" || state.turn !== BLACK || ended(state)) return points;
+        const b = state.board.map(row => row.slice()), n = b.length;
+        for (let r = 0; r < n; r++) {
+          for (let c = 0; c < n; c++) {
+            if (b[r][c] !== 0) continue;
+            let near = false;
+            for (let rr = Math.max(0, r - 4); rr <= Math.min(n - 1, r + 4) && !near; rr++) {
+              for (let cc = Math.max(0, c - 4); cc <= Math.min(n - 1, c + 4); cc++) {
+                if (b[rr][cc] === BLACK) { near = true; break; }
+              }
+            }
+            if (!near) continue;
+            const kind = scanForbidden(b, r, c, 0);
+            if (kind) points.push({ r, c, kind });
+          }
+        }
+        return points;
+      }
+
+      function place(state, r, c) {
+        if (rejectReason(state, r, c) !== null) return state; // 终局、越界、占用、禁手一律原样返回
+        const color = state.turn;
+        const board = state.board.slice();
+        board[r] = state.board[r].slice();
+        board[r][c] = color;
+        const history = [...state.history, { r, c, color }];
+        const winLine = winningLine(board, r, c, color, ruleOf(state));
+        const winner = winLine.length ? color : 0;
+        return {
+          board, history, turn: 3 - color, winner, winLine, rule: ruleOf(state),
+          draw: winner === 0 && history.length === board.length ** 2
+        };
+      }
+
+      function undo(state, count) {
+        if (!Number.isInteger(count) || count <= 0 || !state.history.length) return state;
+        const keep = Math.max(0, state.history.length - count);
+        const board = state.board.map(row => row.slice());
+        for (const move of state.history.slice(keep)) board[move.r][move.c] = 0;
+        return {
+          board, history: state.history.slice(0, keep),
+          turn: keep % 2 === 0 ? BLACK : WHITE, rule: ruleOf(state),
+          winner: 0, draw: false, winLine: []
+        };
+      }
+
+      return { SIZE, SIZES, BLACK, WHITE, DIRECTIONS, inBoard, ended, newGame, shape, place, undo,
+        isForbidden, forbiddenKind, forbiddenPoints, rejectReason };
+    })();
+
+    // 第二层：电脑。只读取棋盘，不访问界面。搜索在 Web Worker（Blob URL）里运行，失败时回退到主线程。
+    // 取胜／堵五在每个难度都最优先；VCF/VCT 威胁空间搜索同时用于进攻与防守。
+    const ai = (() => {
+      // createEngine 的源码会被 toString 后内联进 Worker，所以它不能引用外部变量（含 rules）。
+      function createEngine() {
+        const now = () => performance.now();
+        const DR = [0, 1, 1, 1], DC = [1, 0, 1, -1];
+        const SLEEP2 = 1, OPEN2 = 2, SLEEP3 = 3, OPEN3 = 4, FOUR = 5, OPEN4 = 6, FIVE = 7;
+        // 与 rules.shape 的 kind 对应：活三/跳三同分，冲四/跳四同分。
+        const KIND_SCORE = [0, 50, 200, 500, 5000, 10000, 100000, 1000000];
+        const WIN = 1e9, SIDE = 0x5bd1e995;
+        const LEVELS = {
+          low: { ms: 80, depth: 0, vcf: 0, vct: 0 },
+          mid: { ms: 500, depth: 4, vcf: 8, vct: 0 },
+          high: { ms: 1500, depth: 10, vcf: 14, vct: 3 }
+        };
+        let n = 0, N = 0, board = new Int8Array(0), nb = new Int16Array(0), forbid = new Uint8Array(0);
+        let near = [], zA = null, zB = null, hashA = 0, hashB = 0, tt = new Map();
+        let stopAt = 0, stopped = false, nodes = 0;
+        const tables = {};
+
+        function tableFor(size) {
+          if (tables[size]) return tables[size];
+          let s = 123456789 ^ size;
+          const rnd = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return s | 0; };
+          const total = size * size;
+          const a = new Int32Array(3 * total), b = new Int32Array(3 * total);
+          for (let i = 0; i < a.length; i++) { a[i] = rnd(); b[i] = rnd(); }
+          const lists = [];
+          for (let i = 0; i < total; i++) {
+            const r = Math.floor(i / size), c = i % size, list = [];
+            for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+              const rr = r + dr, cc = c + dc;
+              if ((dr || dc) && rr >= 0 && rr < size && cc >= 0 && cc < size) list.push(rr * size + cc);
+            }
+            lists.push(list);
+          }
+          return (tables[size] = { zA: a, zB: b, near: lists });
+        }
+
+        function init(size, flat, forbidList) {
+          n = size; N = n * n;
+          const t = tableFor(n);
+          zA = t.zA; zB = t.zB; near = t.near;
+          board = Int8Array.from(flat);
+          nb = new Int16Array(N);
+          forbid = new Uint8Array(N);
+          for (const i of forbidList || []) forbid[i] = 1;
+          hashA = 0; hashB = 0;
+          for (let i = 0; i < N; i++) {
+            if (!board[i]) continue;
+            hashA ^= zA[board[i] * N + i]; hashB ^= zB[board[i] * N + i];
+            for (const j of near[i]) nb[j]++;
+          }
+          tt = new Map(); nodes = 0; stopped = false;
+        }
+
+        function make(i, color) {
+          board[i] = color;
+          hashA ^= zA[color * N + i]; hashB ^= zB[color * N + i];
+          const l = near[i];
+          for (let k = 0; k < l.length; k++) nb[l[k]]++;
+        }
+        function unmake(i) {
+          const color = board[i];
+          hashA ^= zA[color * N + i]; hashB ^= zB[color * N + i];
+          board[i] = 0;
+          const l = near[i];
+          for (let k = 0; k < l.length; k++) nb[l[k]]--;
+        }
+        // 禁手点（由主线程在根局面算好）只对黑棋非法。
+        const legal = (i, color) => !(color === 1 && forbid[i] === 1);
+        const inB = (r, c) => r >= 0 && r < n && c >= 0 && c < n;
+        function over() {
+          if (stopped) return true;
+          if ((++nodes & 127) === 0 && now() > stopAt) stopped = true;
+          return stopped;
+        }
+
+        function run(r, c, dr, dc, color) {
+          let k = 0;
+          r += dr; c += dc;
+          while (r >= 0 && r < n && c >= 0 && c < n && board[r * n + c] === color) { k++; r += dr; c += dc; }
+          return k;
+        }
+        function isFive(r, c, color) {
+          for (let d = 0; d < 4; d++) {
+            if (run(r, c, DR[d], DC[d], color) + run(r, c, -DR[d], -DC[d], color) + 1 >= 5) return true;
+          }
+          return false;
+        }
+
+        // 与 rules.shape 同一套窗口逻辑，返回棋型编号而不是名称；中心为空点时按假想落子计算。
+        const cells = new Int8Array(9);
+        function shape(r, c, dr, dc, color) {
+          if (run(r, c, dr, dc, color) + run(r, c, -dr, -dc, color) + 1 >= 5) return FIVE;
+          for (let o = -4; o <= 4; o++) {
+            const rr = r + o * dr, cc = c + o * dc;
+            cells[o + 4] = o === 0 ? 1 : !inB(rr, cc) ? -1 : board[rr * n + cc] === color ? 1 : board[rr * n + cc] === 0 ? 0 : -1;
+          }
+          let most = 0, spots = 0;
+          for (let s = 0; s <= 4; s++) {
+            let stones = 0, empty = -1, blocked = false;
+            for (let i = s; i < s + 5; i++) {
+              if (cells[i] === -1) { blocked = true; break; }
+              if (cells[i] === 1) stones++; else empty = i;
+            }
+            if (blocked) continue;
+            if (stones > most) most = stones;
+            if (stones === 4) spots |= 1 << empty;
+          }
+          let core = 0;
+          for (let s = 0; s <= 3; s++) {
+            if (cells[s] !== 0 || cells[s + 5] !== 0) continue;
+            let stones = 0, blocked = false;
+            for (let i = s + 1; i < s + 5; i++) {
+              if (cells[i] === -1) { blocked = true; break; }
+              stones += cells[i];
+            }
+            if (!blocked && stones > core) core = stones;
+          }
+          if (spots & (spots - 1)) return OPEN4;
+          if (spots) return FOUR;
+          if (core === 3) return OPEN3;
+          if (most === 3) return SLEEP3;
+          if (core === 2) return OPEN2;
+          if (most === 2) return SLEEP2;
+          return 0;
+        }
+
+        let iScore = 0, iFive = false, iFour = 0, iOpen3 = 0;
+        function point(i, color) {
+          const r = Math.floor(i / n), c = i - r * n;
+          iScore = 0; iFive = false; iFour = 0; iOpen3 = 0;
+          for (let d = 0; d < 4; d++) {
+            const k = shape(r, c, DR[d], DC[d], color);
+            iScore += KIND_SCORE[k];
+            if (k === FIVE) { iFive = true; return iScore; }
+            if (k >= FOUR) iFour++; else if (k === OPEN3) iOpen3++;
+          }
+          return iScore;
+        }
+
+        // 刚落在 i 的 color 子所在四条线上，所有能立刻成五的空点。
+        function spotsThrough(i, color) {
+          const r = Math.floor(i / n), c = i % n, out = [];
+          for (let d = 0; d < 4; d++) {
+            for (let k = -4; k <= 4; k++) {
+              if (!k) continue;
+              const rr = r + k * DR[d], cc = c + k * DC[d];
+              if (!inB(rr, cc)) continue;
+              const j = rr * n + cc;
+              if (board[j] !== 0 || out.includes(j)) continue;
+              if (isFive(rr, cc, color)) out.push(j);
+            }
+          }
+          return out;
+        }
+
+        function fourCands(a) {
+          const out = [];
+          for (let i = 0; i < N; i++) {
+            if (board[i] || !nb[i] || !legal(i, a)) continue;
+            point(i, a);
+            if (iFive) return [{ i, s: Infinity, five: true }];
+            if (iFour) out.push({ i, s: iScore, five: false });
+          }
+          return out;
+        }
+
+        // VCF：连续冲四。a 先手；调用时对手不得已有成五点。返回第一手的下标，没有则 -1。
+        function vcf(a, depth) {
+          if (depth <= 0 || over()) return -1;
+          const d = 3 - a, list = fourCands(a);
+          if (!list.length) return -1;
+          if (list[0].five) return list[0].i;
+          list.sort((x, y) => y.s - x.s);
+          for (const m of list) {
+            make(m.i, a);
+            const sp = spotsThrough(m.i, a);
+            let win = false;
+            if (sp.length >= 2 || (sp.length === 1 && !legal(sp[0], d))) win = true;
+            else if (sp.length === 1) {
+              const s = sp[0];
+              if (!isFive(Math.floor(s / n), s % n, d)) {
+                make(s, d);
+                if (!spotsThrough(s, d).length) win = vcf(a, depth - 1) >= 0;
+                unmake(s);
+              }
+            }
+            unmake(m.i);
+            if (win) return m.i;
+            if (stopped) return -1;
+          }
+          return -1;
+        }
+
+        // 活三之后，守方所有可行应手：在这条线上能让进攻方成四的点，加上守方自己的冲四。
+        function threeWins(p, a, d, depth, vd) {
+          const reps = new Set(), pr = Math.floor(p / n), pc = p % n;
+          for (let k = 0; k < 4; k++) {
+            const dr = DR[k], dc = DC[k];
+            if (shape(pr, pc, dr, dc, a) !== OPEN3) continue;
+            for (let o = -4; o <= 4; o++) {
+              if (!o) continue;
+              const rr = pr + o * dr, cc = pc + o * dc;
+              if (!inB(rr, cc) || board[rr * n + cc] !== 0) continue;
+              if (shape(rr, cc, dr, dc, a) >= FOUR) reps.add(rr * n + cc);
+            }
+          }
+          for (let i = 0; i < N; i++) {
+            if (board[i] || !nb[i] || !legal(i, d)) continue;
+            point(i, d);
+            if (iFour) reps.add(i);
+          }
+          for (const q of reps) {
+            if (!legal(q, d)) continue;
+            make(q, d);
+            let ok;
+            const sp = spotsThrough(q, d);
+            if (sp.length >= 2) ok = false;
+            else if (sp.length === 1) {
+              const s = sp[0];
+              if (!legal(s, a)) ok = false;
+              else if (isFive(Math.floor(s / n), s % n, a)) ok = true;
+              else { make(s, a); ok = vct(a, depth - 1, vd) >= 0; unmake(s); }
+            } else ok = vct(a, depth - 1, vd) >= 0;
+            unmake(q);
+            if (!ok || stopped) return false;
+          }
+          return true;
+        }
+
+        // VCT：连续冲四与活三。先试 VCF，再试每个活三／冲四，要求守方所有应手都败。
+        function vct(a, depth, vd) {
+          const v = vcf(a, vd);
+          if (v >= 0 || depth <= 0 || stopped || over()) return v;
+          const d = 3 - a, list = [];
+          for (let i = 0; i < N; i++) {
+            if (board[i] || !nb[i] || !legal(i, a)) continue;
+            point(i, a);
+            if (iFour || iOpen3) list.push({ i, s: iScore, four: iFour > 0 });
+          }
+          list.sort((x, y) => y.s - x.s);
+          for (const m of list.slice(0, 8)) {
+            make(m.i, a);
+            let win = false;
+            if (m.four) {
+              const sp = spotsThrough(m.i, a);
+              if (sp.length >= 2 || (sp.length === 1 && !legal(sp[0], d))) win = true;
+              else if (sp.length === 1) {
+                const s = sp[0];
+                if (!isFive(Math.floor(s / n), s % n, d)) {
+                  make(s, d);
+                  if (!spotsThrough(s, d).length) win = vct(a, depth - 1, vd) >= 0;
+                  unmake(s);
+                }
+              }
+            } else win = threeWins(m.i, a, d, depth, vd);
+            unmake(m.i);
+            if (win) return m.i;
+            if (stopped) return -1;
+          }
+          return -1;
+        }
+
+        function negamax(color, depth, alpha, beta, ply) {
+          if (over()) return 0;
+          const opp = 3 - color;
+          const key = hashA ^ (color === 2 ? SIDE : 0);
+          const ent = tt.get(key);
+          if (ent && ent.b === hashB && ent.d >= depth) {
+            if (ent.f === 0) return ent.v;
+            if (ent.f === 1 && ent.v >= beta) return ent.v;
+            if (ent.f === 2 && ent.v <= alpha) return ent.v;
+          }
+          const moves = [], oppSpots = [];
+          let topMine = 0, topOpp = 0;
+          for (let i = 0; i < N; i++) {
+            if (board[i] || !nb[i]) continue;
+            let sm = -1;
+            if (legal(i, color)) { sm = point(i, color); if (iFive) return WIN - ply; }
+            const so = point(i, opp);
+            if (iFive) oppSpots.push(i);
+            if (so > topOpp) topOpp = so;
+            if (sm >= 0) { moves.push({ i, s: sm + so }); if (sm > topMine) topMine = sm; }
+          }
+          if (oppSpots.length >= 2) return -(WIN - ply - 1);
+          let list = moves;
+          if (oppSpots.length === 1) {
+            if (!legal(oppSpots[0], color)) return -(WIN - ply - 1);
+            list = [{ i: oppSpots[0], s: 0 }];
+          } else {
+            if (!moves.length) return 0;
+            if (depth <= 0) return topMine - topOpp * 0.8;
+            moves.sort((x, y) => y.s - x.s);
+            list = moves.slice(0, depth >= 3 ? 8 : depth === 2 ? 7 : 6);
+          }
+          let best = -Infinity;
+          const a0 = alpha;
+          for (const m of list) {
+            make(m.i, color);
+            const v = -negamax(opp, depth - 1, -beta, -alpha, ply + 1);
+            unmake(m.i);
+            if (stopped) return 0;
+            if (v > best) best = v;
+            if (v > alpha) alpha = v;
+            if (alpha >= beta) break;
+          }
+          if (Math.abs(best) < WIN / 2) {
+            tt.set(key, { b: hashB, d: depth, v: best, f: best <= a0 ? 2 : best >= beta ? 1 : 0 });
+          }
+          return best;
+        }
+
+        function rootSearch(color, pool, cfg) {
+          let order = pool.slice(), bestI = order[0].i, reached = 0;
+          for (let depth = 1; depth <= cfg.depth; depth++) {
+            let alpha = -Infinity, hereI = -1, hereV = -Infinity;
+            for (const m of order) {
+              make(m.i, color);
+              const v = -negamax(3 - color, depth - 1, -Infinity, -alpha, 1);
+              unmake(m.i);
+              if (stopped) break;
+              if (v > hereV) { hereV = v; hereI = m.i; if (v > alpha) alpha = v; }
+            }
+            if (stopped || hereI < 0) break;
+            bestI = hereI; reached = depth;
+            order = [order.find(m => m.i === hereI), ...order.filter(m => m.i !== hereI)];
+            if (Math.abs(hereV) >= WIN / 2) break;
+          }
+          return { i: bestI, depth: reached };
+        }
+
+        // 子预算：只在子预算耗尽（总预算还没到）时清掉 stopped，让后续阶段继续。
+        function timed(ms, fn) {
+          const saved = stopAt;
+          stopAt = Math.min(saved, now() + ms);
+          let r = -1;
+          try { r = fn(); } finally {
+            if (stopped && now() < saved) stopped = false;
+            stopAt = saved;
+          }
+          return r;
+        }
+
+        function search(size, flat, color, level, forbidList) {
+          const cfg = LEVELS[level] || LEVELS.mid, t0 = now();
+          init(size, flat, forbidList);
+          stopAt = t0 + cfg.ms;
+          const opp = 3 - color, ctr = (size - 1) / 2;
+          const cd = i => (Math.floor(i / n) - ctr) ** 2 + ((i % n) - ctr) ** 2;
+          const out = (i, mode, depth) => ({
+            move: i < 0 ? null : { r: Math.floor(i / n), c: i % n }, mode, depth: depth || 0, nodes, searchMs: now() - t0
+          });
+          let stones = 0;
+          const cands = [], oppSpots = [], wins = [];
+          for (let i = 0; i < N; i++) {
+            if (board[i]) { stones++; continue; }
+            if (!nb[i]) continue;
+            let sm = -1;
+            if (legal(i, color)) { sm = point(i, color); if (iFive) wins.push(i); }
+            const so = point(i, opp);
+            if (iFive) oppSpots.push(i);
+            if (sm >= 0) {
+              const r = Math.floor(i / n), c = i % n;
+              cands.push({ i, a: sm, d: so, dist: (r - ctr) ** 2 + (c - ctr) ** 2, s: 0 });
+            }
+          }
+          if (wins.length) return out(wins.sort((x, y) => cd(x) - cd(y) || x - y)[0], 'win');
+          if (stones === 0) {
+            const mid = Math.floor(ctr) * n + Math.floor(ctr);
+            return out(legal(mid, color) ? mid : -1, 'open');
+          }
+          if (oppSpots.length) {
+            const b = oppSpots.filter(i => legal(i, color)).sort((x, y) => cd(x) - cd(y) || x - y)[0];
+            return out(b !== undefined ? b : cands.length ? cands[0].i : oppSpots[0], 'block');
+          }
+          if (!cands.length) {
+            for (let i = 0; i < N; i++) {
+              if (board[i] || !legal(i, color)) continue;
+              const r = Math.floor(i / n), c = i % n;
+              cands.push({ i, a: 0, d: 0, dist: (r - ctr) ** 2 + (c - ctr) ** 2, s: 0 });
+            }
+            if (!cands.length) return out(-1, 'none');
+          }
+          for (const m of cands) m.s = m.a + m.d - m.dist * 0.001;
+          cands.sort((x, y) => y.s - x.s || x.dist - y.dist || x.i - y.i);
+          if (!cfg.depth) {
+            const adj = i => {
+              const l = near[i], r = Math.floor(i / n), c = i % n;
+              for (const j of l) {
+                if (Math.abs(Math.floor(j / n) - r) <= 1 && Math.abs((j % n) - c) <= 1 && board[j]) return true;
+              }
+              return false;
+            };
+            const byDist = cands.filter(m => adj(m.i)).sort((x, y) => x.dist - y.dist || x.i - y.i);
+            let best = null, bs = -Infinity;
+            for (const m of byDist) { const s = m.a + m.d * 0.3; if (s > bs) { bs = s; best = m; } }
+            return out((best || cands[0]).i, 'greedy');
+          }
+          const threat = (a, ms) => timed(ms, () => (cfg.vct ? vct(a, cfg.vct, cfg.vcf) : vcf(a, cfg.vcf)));
+          const safeAfter = (m, ms) => {
+            make(m, color);
+            let ok;
+            const sp = spotsThrough(m, color);
+            if (sp.length >= 2) ok = true;
+            else if (sp.length === 1) {
+              const s = sp[0];
+              if (!legal(s, opp)) ok = true;
+              else if (isFive(Math.floor(s / n), s % n, opp)) ok = false;
+              else { make(s, opp); ok = spotsThrough(s, opp).length ? false : threat(opp, ms) < 0; unmake(s); }
+            } else ok = threat(opp, ms) < 0;
+            unmake(m);
+            return ok;
+          };
+          const attack = threat(color, cfg.ms * 0.3);
+          if (attack >= 0) return out(attack, 'threat-win');
+          let pool = cands.slice(0, 12);
+          if (threat(opp, cfg.ms * 0.15) >= 0) {
+            const wide = cands.slice(0, 30), per = Math.max(10, cfg.ms * 0.3 / wide.length), safe = [];
+            for (const m of wide) {
+              if (now() > t0 + cfg.ms * 0.55) break;
+              if (safeAfter(m.i, per)) safe.push(m);
+            }
+            if (safe.length) pool = safe;
+            else pool = wide.slice(0, 12);
+          }
+          pool = pool.slice(0, cfg.depth >= 6 ? 16 : 12);
+          const res = rootSearch(color, pool, cfg);
+          return out(res.i, 'search', res.depth);
+        }
+
+        // 只做威胁空间搜索，供测试与调试使用：color 先手时有无 VCF／VCT。
+        function probe(size, flat, color, ms) {
+          init(size, flat, []);
+          stopAt = now() + ms;
+          const toPoint = i => (i < 0 ? null : { r: Math.floor(i / n), c: i % n });
+          const f = vcf(color, 14);
+          if (stopped) stopped = false;
+          const t = vct(color, 3, 14);
+          return { vcf: toPoint(f), vct: toPoint(t) };
+        }
+
+        return { search, probe, LEVELS };
+      }
+
+      const local = createEngine();
+      const settings = { worker: true };
+      const pause = () => new Promise(resolve => setTimeout(resolve, 0));
+      const flatten = board => {
+        const size = board.length, flat = new Array(size * size);
+        for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) flat[r * size + c] = board[r][c];
+        return flat;
+      };
+
+      // 禁手钩子：rules.isForbidden(state, r, c)，state 为 {board, turn, history}。
+      // 只在根局面对黑棋算一次（history 为空数组），搜索内部把这些点一律当作黑棋非法点。
+      // rule 由调用方传入：显式为 'free' 时没有禁手；缺省保持旧行为（交给 rules.isForbidden 判断）。
+      function forbiddenPoints(board, rule) {
+        const out = [];
+        if (rule === 'free' || typeof rules.isForbidden !== 'function') return out;
+        const size = board.length, copy = board.map(row => row.slice());
+        const state = { board: copy, turn: rules.BLACK, history: [] };
+        for (let r = 0; r < size; r++) {
+          for (let c = 0; c < size; c++) {
+            if (copy[r][c] !== 0) continue;
+            let close = false;
+            for (let dr = -2; dr <= 2 && !close; dr++) for (let dc = -2; dc <= 2; dc++) {
+              if (rules.inBoard(copy, r + dr, c + dc) && copy[r + dr][c + dc] !== 0) { close = true; break; }
+            }
+            if (!close) continue;
+            try { if (rules.isForbidden(state, r, c)) out.push(r * size + c); } catch { /* 出错按合法处理 */ }
+          }
+        }
+        return out;
+      }
+
+      const workerSource = () => 'const engine = (' + createEngine.toString() + ')();\n' +
+        'self.onmessage = e => { const m = e.data; let out; ' +
+        'try { out = engine.search(m.size, m.flat, m.color, m.level, m.forbidden); } ' +
+        'catch (err) { out = { move: null, error: String(err) }; } self.postMessage(out); };';
+
+      // 每次计算一个独立 Worker；取消即 terminate。Worker 建不起来时 reject，由调用方回退。
+      function runWorker(msg, signal) {
+        return new Promise((resolve, reject) => {
+          let url, w;
+          try {
+            url = URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' }));
+            w = new Worker(url);
+          } catch (error) {
+            if (url) URL.revokeObjectURL(url);
+            reject(error);
+            return;
+          }
+          const finish = value => {
+            signal?.removeEventListener('abort', onAbort);
+            w.onmessage = null; w.onerror = null;
+            w.terminate();
+            URL.revokeObjectURL(url);
+            return value;
+          };
+          const onAbort = () => resolve(finish({ cancelled: true }));
+          w.onmessage = event => resolve(finish(event.data));
+          w.onerror = event => { if (event.preventDefault) event.preventDefault(); reject(finish(new Error('worker error'))); };
+          signal?.addEventListener('abort', onAbort, { once: true });
+          w.postMessage(msg);
+        });
+      }
+
+      async function chooseMove(board, color, signal, level = 'mid', rule) {
+        const started = performance.now();
+        const result = (move, cancelled, computeMs = 0) => ({ move, cancelled, computeMs, totalMs: performance.now() - started });
+        if (signal?.aborted) return result(null, true);
+        await pause();
+        if (signal?.aborted) return result(null, true);
+        const sliceStart = performance.now();
+        const size = board.length, flat = flatten(board);
+        const msg = { size, flat, color, level, forbidden: forbiddenPoints(board, rule) };
+        let reply = null;
+        if (settings.worker && typeof Worker === 'function') {
+          try { reply = await runWorker(msg, signal); } catch { reply = null; }
+        }
+        if (reply?.cancelled || signal?.aborted) return result(null, true, performance.now() - sliceStart);
+        if (!reply || reply.error) {
+          await pause();
+          if (signal?.aborted) return result(null, true, performance.now() - sliceStart);
+          reply = local.search(size, flat, color, level, msg.forbidden);
+        }
+        if (signal?.aborted) return result(null, true, performance.now() - sliceStart);
+        return result(reply.move, false, performance.now() - sliceStart);
+      }
+
+      // 主线程同步的威胁空间探测（不经 Worker），供自检与测试使用。
+      const probe = (board, color, ms = 300) => local.probe(board.length, flatten(board), color, ms);
+
+      return { chooseMove, probe, settings, LEVELS: local.LEVELS };
+    })();
+
+    // 地址末尾加 #self-test 可重复运行；平时不执行测试或增加启动负担。
+    async function runSelfChecks() {
+      function assert(ok, message) {
+        if (!ok) throw new Error("规则自检失败：" + message);
+      }
+      for (const size of rules.SIZES) {
+        for (const [dr, dc] of rules.DIRECTIONS) {
+          let state = rules.newGame(size);
+          const c0 = dc < 0 ? size - 1 : 0, mid = (size - 1) / 2;
+          for (let i = 0; i < 5; i++) {
+            state = rules.place(state, i * dr, c0 + i * dc);
+            if (i < 4) state = rules.place(state, size - 1, i * 2);
+          }
+          assert(state.winner === rules.BLACK && state.winLine.length === 5, size + "路四方向判胜");
+          assert(rules.place(state, mid, mid) === state, "终局禁止落子");
+          const back = rules.undo(state, 1);
+          assert(!rules.ended(back) && back.winLine.length === 0 &&
+            back.history.length === 8 && back.turn === rules.BLACK &&
+            back.board[4 * dr][c0 + 4 * dc] === 0, size + "路终局回滚");
+        }
+      }
+      let state = rules.newGame();
+      for (const [i, c] of [0, 1, 2, 4, 5].entries()) {
+        state = rules.place(state, 7, c);
+        state = rules.place(state, 0, i * 2);
+      }
+      state = rules.place(state, 7, 3);
+      assert(state.winner === rules.BLACK, "六连也获胜");
+      // [规则选项] 连珠禁手自检（单独块作用域，坐标均为 15 路盘 [行, 列]）
+      {
+        const B = rules.BLACK, W = rules.WHITE;
+        const mk = (rule, turn, blacks, whites = []) => {
+          const s = rules.newGame(15, rule);
+          for (const [r, c] of blacks) s.board[r][c] = B;
+          for (const [r, c] of whites) s.board[r][c] = W;
+          s.turn = turn;
+          return s;
+        };
+        const kind = (s, r, c) => rules.forbiddenKind(s, r, c);
+        const dthree = [[7, 5], [7, 6], [5, 7], [6, 7]];
+        // 三三：横向和纵向各成真活三
+        const s33 = mk('renju', B, dthree);
+        assert(kind(s33, 7, 7) === '三三' && rules.isForbidden(s33, 7, 7), '连珠三三禁手');
+        assert(rules.place(s33, 7, 7) === s33 && rules.rejectReason(s33, 7, 7) === 'forbidden', '禁手落子被拒且返回原状态');
+        assert(rules.rejectReason(s33, 7, 5) === 'occupied' && rules.rejectReason(s33, 0, 0) === null &&
+          rules.rejectReason(s33, -1, 0) === 'outside' && !rules.isForbidden(s33, 7, 5), '占用点不是禁手');
+        assert(!rules.isForbidden(mk('free', B, dthree), 7, 7) && rules.place(mk('free', B, dthree), 7, 7).history.length === 1, '无禁手规则不受限');
+        // 四四：两条线各成冲四；以及同一直线上的 X.XXX.X 一手两个四
+        assert(kind(mk('renju', B, [[7, 4], [7, 5], [7, 6], [4, 7], [5, 7], [6, 7]], [[7, 3], [3, 7]]), 7, 7) === '四四', '连珠四四（两条线）');
+        assert(kind(mk('renju', B, [[7, 1], [7, 3], [7, 5], [7, 7]]), 7, 4) === '四四', '连珠四四（同线跳四）');
+        // 长连：黑棋禁手，不算胜；无禁手规则下仍是胜
+        const over = [[7, 2], [7, 3], [7, 4], [7, 6], [7, 7]];
+        const sOver = mk('renju', B, over);
+        assert(kind(sOver, 7, 5) === '长连' && rules.place(sOver, 7, 5) === sOver, '连珠长连禁手');
+        assert(rules.place(mk('free', B, over), 7, 5).winner === B, '无禁手规则六连仍获胜');
+        // 恰好五连豁免：同时形成冲四也不是禁手，且获胜
+        const sFive = mk('renju', B, [[7, 3], [7, 4], [7, 5], [7, 6], [4, 7], [5, 7], [6, 7]], [[3, 7]]);
+        const wonFive = rules.place(sFive, 7, 7);
+        assert(kind(sFive, 7, 7) === '' && wonFive.winner === B && wonFive.winLine.length === 5, '恰好五连不受禁手限制');
+        // 假三：横向一端被白子封住，不是真活三，只剩一个活三 → 不禁
+        assert(kind(mk('renju', B, dthree, [[7, 4], [7, 3]]), 7, 7) === '', '假活三不算三三');
+        // 成活四的点本身是禁手：横三只能在 (7,8) 成活四，而 (7,8) 是四四禁手 → 这个三不算活三
+        const base3 = mk('renju', B, dthree, [[7, 3]]);
+        const blocked3 = mk('renju', B, dthree.concat([[4, 8], [5, 8], [6, 8]]), [[7, 3], [3, 8]]);
+        assert(kind(base3, 7, 7) === '三三', '对照局面仍是三三');
+        // (7,8) 单独只有竖向一个四；黑子落在 (7,7) 后横向成四，才是四四，递归判断正是在这个假设下进行
+        const withCenter = mk('renju', B, dthree.concat([[4, 8], [5, 8], [6, 8], [7, 7]]), [[7, 3], [3, 8]]);
+        assert(kind(withCenter, 7, 8) === '四四' && kind(blocked3, 7, 7) === '', '活四点为禁手时该三不计入三三');
+        // 白棋不受限，五子及以上即胜
+        assert(!rules.isForbidden(mk('renju', W, [], dthree), 7, 7) && rules.place(mk('renju', W, [], dthree), 7, 7).history.length === 1, '白棋不受禁手限制');
+        assert(rules.place(mk('renju', W, [], over), 7, 5).winner === W, '连珠规则下白棋长连也胜');
+        // rule 贯穿 newGame / place / undo；缺省 rule 按连珠处理（供电脑层调用）
+        const g = rules.newGame(15, 'renju'), g1 = rules.place(g, 7, 7);
+        assert(g.rule === 'renju' && g1.rule === 'renju' && rules.undo(g1, 1).rule === 'renju' && rules.newGame().rule === 'free', 'rule 随状态传递');
+        assert(rules.isForbidden({ board: sOver.board, turn: B, history: [] }, 7, 5), '缺省 rule 按连珠');
+      }
+      const fresh = rules.newGame();
+      assert(!rules.ended(fresh) && fresh.turn === rules.BLACK &&
+        fresh.history.length === 0 && fresh.board.every(row => row.every(cell => cell === 0)), "重开归零");
+      assert(rules.place(fresh, -1, 0) === fresh && rules.place(fresh, 15, 0) === fresh, "越界忽略");
+      const one = rules.place(fresh, 0, 0);
+      assert(rules.place(one, 0, 0) === one && fresh.board[0][0] === 0, "占用忽略且不修改原状态");
+      const back = rules.undo(one, 2);
+      assert(back.history.length === 0 && back.turn === rules.BLACK && back.board[0][0] === 0, "不足两步撤销");
+      let shapeCases = 0;
+      for (const [pattern, kind] of [
+        ["#.XX.#", "其他"], ["#.XXX.#", "眠三"], [".XXXX.", "活四"],
+        ["#XXXX.", "冲四"], [".XX.XX.", "跳四"], [".X.XXX.", "跳四"],
+        ["..XXX..", "活三"], [".XX.X.", "跳三"], [".X.XX.", "跳三"],
+        ["...XX...", "活二"], ["#XX...", "眠二"], ["XXXXX", "连五"]
+      ]) {
+        for (const [dr, dc] of rules.DIRECTIONS) {
+          for (const color of [rules.BLACK, rules.WHITE]) {
+            for (let center = 0; center < pattern.length; center++) {
+              if (pattern[center] !== "X") continue;
+              const board = rules.newGame().board;
+              for (let i = 0; i < pattern.length; i++) {
+                const r = 7 + (i - center) * dr, c = 7 + (i - center) * dc;
+                board[r][c] = pattern[i] === "X" ? color : pattern[i] === "#" ? 3 - color : 0;
+              }
+              board[7][7] = 0;
+              assert(rules.shape(board, 7, 7, dr, dc, color).kind === kind, "棋型 " + pattern);
+              shapeCases++;
+            }
+          }
+        }
+      }
+      for (const size of rules.SIZES) {
+        const board = rules.newGame(size).board;
+        for (let r = 0; r < size; r++) {
+          for (let c = 0; c < size; c++) {
+            for (const [dr, dc] of rules.DIRECTIONS) rules.shape(board, r, c, dr, dc, rules.BLACK);
+          }
+        }
+      }
+      // 交错条纹没有五连；15 路再交换四点得到只能在最后一手成五的满盘样例。
+      for (const size of rules.SIZES) {
+        for (const winning of size === 15 ? [false, true] : [false]) {
+          const pools = [[], [], []];
+          const mid = (size - 1) / 2;
+          for (let r = 0; r < size; r++) {
+            for (let c = 0; c < size; c++) {
+              let color = (r + 2 * c) % 4 < 2 ? rules.BLACK : rules.WHITE;
+              if (winning && r === mid && (c === mid - 1 || c === mid + 1)) color = rules.BLACK;
+              if (winning && ((r === mid - 2 && c === mid - 1) || (r === 2 && c === mid))) color = rules.WHITE;
+              if (r !== mid || c !== mid) pools[color].push({ r, c });
+            }
+          }
+          pools[rules.BLACK].push({ r: mid, c: mid });
+          // 中心在条纹里是白子时，黑白池会差两子；挪一子补平，单格翻转不会凑出五连。
+          while (pools[rules.BLACK].length > pools[rules.WHITE].length + 1) {
+            pools[rules.WHITE].push(pools[rules.BLACK].pop());
+          }
+          let filled = rules.newGame(size);
+          for (let i = 0; i < size * size; i++) {
+            const point = pools[filled.turn].shift();
+            filled = rules.place(filled, point.r, point.c);
+          }
+          assert(filled.history.length === size * size && filled.draw === !winning &&
+            filled.winner === (winning ? rules.BLACK : 0), size + "路满盘判平且胜利优先");
+        }
+      }
+      let reply = await ai.chooseMove(fresh.board, rules.WHITE);
+      assert(reply.move.r === 7 && reply.move.c === 7, "同分靠近中心");
+      for (const ownWin of [false, true]) {
+        const board = rules.newGame().board;
+        for (let c = 3; c < 7; c++) {
+          board[7][c] = rules.BLACK;
+          if (ownWin) board[1][c] = rules.WHITE;
+        }
+        const snapshot = JSON.stringify(board);
+        reply = await ai.chooseMove(board, rules.WHITE);
+        assert(reply.move.r === (ownWin ? 1 : 7) && reply.move.c === 7, "取胜优先于堵点");
+        assert(JSON.stringify(board) === snapshot, "AI不修改棋盘");
+      }
+      const gap = rules.newGame().board;
+      for (const c of [3, 4, 6, 7]) gap[6][c] = rules.BLACK;
+      reply = await ai.chooseMove(gap, rules.WHITE);
+      assert(reply.move.r === 6 && reply.move.c === 5, "堵住五连断点");
+      // 三档难度都保留“先取胜、再堵五”，差别只在候选范围与评分。
+      for (const level of ["low", "mid", "high"]) {
+        for (const size of rules.SIZES) {
+          const board = rules.newGame(size).board;
+          const mid = (size - 1) / 2;
+          for (let c = 3; c < 7; c++) board[mid][c] = rules.BLACK;
+          const snapshot = JSON.stringify(board);
+          reply = await ai.chooseMove(board, rules.WHITE, null, level);
+          assert(reply.move.r === mid && reply.move.c === 7, level + "难度堵住连五点");
+          assert(JSON.stringify(board) === snapshot, level + "难度不修改棋盘");
+        }
+        const board = rules.newGame().board;
+        for (let c = 3; c < 7; c++) board[9][c] = rules.WHITE;
+        for (let c = 3; c < 6; c++) board[1][c] = rules.BLACK;
+        reply = await ai.chooseMove(board, rules.WHITE, null, level);
+        assert(reply.move.r === 9 && reply.move.c === 7, level + "难度自己先连五");
+      }
+      const jump = rules.newGame().board;
+      for (const c of [3, 4, 6]) jump[10][c] = rules.BLACK;
+      reply = await ai.chooseMove(jump, rules.WHITE, null, "high");
+      assert(reply.move.r === 10 && reply.move.c === 5, "高难度堵住跳三断点");
+      const controller = new AbortController();
+      const pending = ai.chooseMove(fresh.board, rules.WHITE, controller.signal);
+      controller.abort();
+      reply = await pending;
+      assert(reply.cancelled && reply.move === null, "任务取消");
+      // 四三：黑下 (7,7) 同时成冲四和活三；VCF/VCT 必须找到，对手必须堵。
+      const fourThree = rules.newGame().board;
+      fourThree[7][3] = rules.WHITE;
+      for (const [r, c] of [[7, 4], [7, 5], [7, 6], [5, 7], [6, 7]]) fourThree[r][c] = rules.BLACK;
+      const probed = ai.probe(fourThree, rules.BLACK, 500);
+      assert(probed.vcf && probed.vcf.r === 7 && probed.vcf.c === 7, "VCF 找到四三");
+      assert(probed.vct && probed.vct.r === 7 && probed.vct.c === 7, "VCT 找到四三");
+      for (const level of ["mid", "high"]) {
+        const snapshot = JSON.stringify(fourThree);
+        reply = await ai.chooseMove(fourThree, rules.BLACK, null, level);
+        assert(reply.move.r === 7 && reply.move.c === 7, level + "难度走出四三");
+        reply = await ai.chooseMove(fourThree, rules.WHITE, null, level);
+        assert(reply.move.r === 7 && (reply.move.c === 7 || reply.move.c === 8), level + "难度堵住对手四三");
+        assert(JSON.stringify(fourThree) === snapshot, level + "难度不修改棋盘");
+      }
+      // 每档难度在各自时间预算内应答（留 400ms 给 Worker 启动与调度）。
+      const busy = rules.newGame().board;
+      for (const [r, c, k] of [[7, 7, 1], [7, 8, 2], [8, 8, 1], [6, 6, 2], [8, 7, 1], [9, 7, 2],
+        [6, 8, 1], [8, 6, 2], [9, 9, 1], [10, 10, 2]]) busy[r][c] = k;
+      for (const level of ["low", "mid", "high"]) {
+        const t0 = performance.now();
+        reply = await ai.chooseMove(busy, rules.BLACK, null, level);
+        const elapsed = performance.now() - t0;
+        assert(reply.move && !busy[reply.move.r][reply.move.c], level + "难度落点合法");
+        assert(elapsed < ai.LEVELS[level].ms + 400, level + "难度超出时间预算：" + elapsed.toFixed(0) + "ms");
+      }
+      // 搜索进行中取消：必须很快以 cancelled 返回。
+      const slow = new AbortController();
+      const t1 = performance.now();
+      const running = ai.chooseMove(busy, rules.BLACK, slow.signal, "high");
+      setTimeout(() => slow.abort(), 60);
+      reply = await running;
+      assert(reply.cancelled && reply.move === null && performance.now() - t1 < 400, "搜索中取消");
+      return { shapeCases, message: "规则、棋型与AI回归自检通过" };
+    }
+
+    // 第三层：界面。棋盘写入只能通过 rules.place / rules.undo / rules.newGame。
+    (() => {
+      const canvas = document.getElementById("board");
+      const ctx = canvas.getContext("2d");
+      const mode = document.getElementById("mode");
+      const level = document.getElementById("level");
+      const gameSize = document.getElementById("size");
+      const ruleSelect = document.getElementById('rule'); // [规则选项]
+      const subtitle = document.getElementById('subtitle'); // [规则选项]
+      const zoom = document.getElementById("zoom");
+      const undoButton = document.getElementById("undo");
+      const restartButton = document.getElementById("restart");
+      const turnLabel = document.getElementById("turn-label");
+      const turnText = document.getElementById("turn-text");
+      const swatch = document.getElementById("swatch");
+      const steps = document.getElementById("steps");
+      const result = document.getElementById("result");
+      const modeHint = document.getElementById("mode-hint");
+      // UX: 新增控件引用
+      const side = document.getElementById("side");
+      const redoButton = document.getElementById("redo");
+      const hintButton = document.getElementById("hint-btn");
+      const confirmButton = document.getElementById("confirm");
+      const numbersButton = document.getElementById("numbers");
+      const soundButton = document.getElementById("sound");
+      const PADDING = 40, SIDE = 640, STORE_KEY = "gomoku.v2";
+      const LEVEL_NAMES = { low: "低", mid: "中", high: "高" };
+      // 画面固定 640 逻辑像素，路数越多格距越小，棋子与标记按同一比例缩放。
+      let gap = 40, unit = 1;
+      let state = rules.newGame();
+      let hover = null, keyboard = { r: 7, c: 7 }, keyboardMode = false;
+      let busy = false, version = 0, frame = 0, errorText = "", aiController = null;
+      // UX: 重做栈、提示、触屏待确认点、手数与音效开关；执子由 side 决定，不再写死黑棋
+      let redoStack = [], lastUndoCount = 1, hintPoint = null, hintTicket = 0, pending = null;
+      let showNumbers = false, soundOn = false, audio = null, lastPointerType = "mouse";
+      const humanColor = () => side.value === "white" ? rules.WHITE : rules.BLACK;
+      const aiColor = () => 3 - humanColor();
+      const colorName = color => color === rules.BLACK ? "黑棋" : "白棋";
+      const canPlay = () => !rpSession && !rules.ended(state) && !busy &&
+        (mode.value === "pvp" || state.turn === humanColor());
+      // UX: 悔棋步数：人机轮到玩家时退两步，电脑思考中退一步；执白时保留电脑的开局第一手
+      const undoCount = () => {
+        const vsAI = mode.value === "ai";
+        const want = vsAI && state.turn === humanColor() ? 2 : 1;
+        const floor = vsAI && humanColor() === rules.WHITE ? 1 : 0;
+        return Math.min(want, state.history.length - floor);
+      };
+      function blip() {
+        if (!soundOn) return;
+        try {
+          audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+          const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime;
+          osc.frequency.value = 520;
+          gain.gain.setValueAtTime(.12, t);
+          gain.gain.exponentialRampToValueAtTime(.001, t + .08);
+          osc.connect(gain);
+          gain.connect(audio.destination);
+          osc.start(t);
+          osc.stop(t + .09);
+        } catch {
+          // 无 WebAudio 时静默。
+        }
+      }
+      const center = () => {
+        const middle = Math.floor((state.board.length - 1) / 2);
+        return { r: middle, c: middle };
+      };
+      const xy = point => ({ x: PADDING + point.c * gap, y: PADDING + point.r * gap });
+      function measure() {
+        gap = (SIDE - PADDING * 2) / (state.board.length - 1);
+        unit = gap / 40;
+      }
+
+      function stone(x, y, color, alpha = 1) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.shadowColor = "#32220b66";
+        ctx.shadowBlur = 4 * unit;
+        ctx.shadowOffsetY = 2 * unit;
+        const gradient = ctx.createRadialGradient(x - 6 * unit, y - 7 * unit, 2 * unit, x, y, 18 * unit);
+        gradient.addColorStop(0, color === rules.BLACK ? "#68645e" : "#ffffff");
+        gradient.addColorStop(.55, color === rules.BLACK ? "#282725" : "#f4f1eb");
+        gradient.addColorStop(1, color === rules.BLACK ? "#080808" : "#cbc5b9");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(x, y, 17.5 * unit, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // [规则选项] 禁手点缓存：同一个 state 对象只计算一次，状态变化后惰性重算
+      let forbiddenFor = null, forbiddenList = [];
+      function forbiddenMarks() {
+        if (forbiddenFor !== state) { forbiddenFor = state; forbiddenList = rules.forbiddenPoints(state); }
+        return forbiddenList;
+      }
+
+      function draw() {
+        ctx.setTransform(canvas.width / SIDE, 0, 0, canvas.height / SIDE, 0, 0);
+        ctx.clearRect(0, 0, SIDE, SIDE);
+        const wood = ctx.createLinearGradient(0, 0, SIDE, SIDE);
+        wood.addColorStop(0, "#d6b980");
+        wood.addColorStop(.5, "#c8a96a");
+        wood.addColorStop(1, "#be9b5b");
+        ctx.fillStyle = wood;
+        ctx.fillRect(0, 0, SIDE, SIDE);
+        const n = state.board.length, middle = (n - 1) / 2;
+        ctx.strokeStyle = "#604a2b";
+        ctx.lineWidth = .8 * unit;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const p = PADDING + i * gap;
+          ctx.moveTo(PADDING, p);
+          ctx.lineTo(SIDE - PADDING, p);
+          ctx.moveTo(p, PADDING);
+          ctx.lineTo(p, SIDE - PADDING);
+        }
+        ctx.stroke();
+        ctx.fillStyle = "#604a2b";
+        for (const [r, c] of [[3, 3], [3, n - 4], [middle, middle], [n - 4, 3], [n - 4, n - 4]]) {
+          const { x, y } = xy({ r, c });
+          ctx.beginPath();
+          ctx.arc(x, y, 3 * unit, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (const [index, move] of state.history.entries()) {
+          const { x, y } = xy(move);
+          stone(x, y, move.color);
+          if (showNumbers) { // UX: 显示手数，最后一手红字
+            ctx.save();
+            ctx.font = `bold ${(index >= 99 ? 12 : 15) * unit}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = index === state.history.length - 1 ? "#ff5a4d" : move.color === rules.BLACK ? "#f3efe6" : "#2a2824";
+            ctx.fillText(String(index + 1), x, y + .5 * unit);
+            ctx.restore();
+          }
+        }
+        if (state.winLine.length) {
+          ctx.save();
+          ctx.strokeStyle = "#fff2a5";
+          ctx.lineWidth = 3 * unit;
+          ctx.shadowColor = "#a45900";
+          ctx.shadowBlur = 5 * unit;
+          for (const point of state.winLine) {
+            const { x, y } = xy(point);
+            ctx.beginPath();
+            ctx.arc(x, y, 19 * unit, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          const first = xy(state.winLine[0]);
+          const last = xy(state.winLine[4]);
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(first.x, first.y);
+          ctx.lineTo(last.x, last.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // [规则选项] 连珠规则下，黑棋走子时在禁手点画小红叉
+        if (state.rule === 'renju' && state.turn === rules.BLACK && !rules.ended(state)) {
+          ctx.save();
+          ctx.strokeStyle = '#d42a2a';
+          ctx.lineWidth = 2 * unit;
+          ctx.lineCap = 'round';
+          const arm = 6 * unit;
+          ctx.beginPath();
+          for (const p of forbiddenMarks()) {
+            const { x, y } = xy(p);
+            ctx.moveTo(x - arm, y - arm); ctx.lineTo(x + arm, y + arm);
+            ctx.moveTo(x + arm, y - arm); ctx.lineTo(x - arm, y + arm);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+        if (hover && canPlay() && state.board[hover.r][hover.c] === 0) {
+          const { x, y } = xy(hover);
+          stone(x, y, state.turn, .42);
+        }
+        // UX: 触屏待确认的预览子，带描边
+        if (pending && canPlay() && state.board[pending.r][pending.c] === 0) {
+          const { x, y } = xy(pending);
+          stone(x, y, state.turn, .6);
+          ctx.save();
+          ctx.strokeStyle = "#98642e";
+          ctx.lineWidth = 2.5 * unit;
+          ctx.beginPath();
+          ctx.arc(x, y, 21 * unit, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // UX: 提示点：安静的细圈，无动画；下一手后自动失效
+        if (!rpSession && hintPoint && hintPoint.len === state.history.length && !rules.ended(state) &&
+            state.board[hintPoint.r][hintPoint.c] === 0) {
+          const { x, y } = xy(hintPoint);
+          ctx.save();
+          ctx.strokeStyle = "#1f7a5a";
+          ctx.lineWidth = 2.5 * unit;
+          ctx.beginPath();
+          ctx.arc(x, y, 16 * unit, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        if (keyboardMode && !rules.ended(state)) {
+          const { x, y } = xy(keyboard);
+          ctx.save();
+          ctx.strokeStyle = "#fffaf0";
+          ctx.lineWidth = 4 * unit;
+          ctx.strokeRect(x - 19 * unit, y - 19 * unit, 38 * unit, 38 * unit);
+          ctx.strokeStyle = "#654017";
+          ctx.lineWidth = 1.5 * unit;
+          ctx.strokeRect(x - 19 * unit, y - 19 * unit, 38 * unit, 38 * unit);
+          ctx.restore();
+        }
+        const lastMove = state.history[state.history.length - 1];
+        if (lastMove) {
+          const { x, y } = xy(lastMove);
+          if (showNumbers) { // UX: 有手数时用红圈标出最后一手
+            ctx.strokeStyle = "#ed3535";
+            ctx.lineWidth = 2 * unit;
+            ctx.beginPath();
+            ctx.arc(x, y, 20 * unit, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = "#ed3535";
+            ctx.beginPath();
+            ctx.arc(x, y, 3.5 * unit, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      function redraw() {
+        if (frame) return;
+        frame = requestAnimationFrame(() => { frame = 0; drawView(); });
+      }
+
+      function resize() {
+        const size = Math.round(canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1));
+        if (canvas.width !== size || canvas.height !== size) {
+          canvas.width = size;
+          canvas.height = size;
+        }
+        redraw();
+      }
+
+      function describeSelection() {
+        const cell = state.board[keyboard.r][keyboard.c];
+        const description = cell === 0 ? "空位" : cell === rules.BLACK ? "黑棋" : "白棋";
+        canvas.setAttribute("aria-label", `棋盘第${keyboard.r + 1}行，第${keyboard.c + 1}列，${description}`);
+      }
+
+      function cancelAI() {
+        version++;
+        if (aiController) aiController.abort();
+        aiController = null;
+        busy = false;
+      }
+
+      function save() {
+        try {
+          localStorage.setItem(STORE_KEY, JSON.stringify({
+            mode: mode.value, level: level.value, size: gameSize.value, zoom: zoom.value, rule: ruleSelect.value, // [规则选项]
+            side: side.value, numbers: showNumbers, sound: soundOn, // UX
+            moves: state.history.map(move => [move.r, move.c])
+          }));
+        } catch {
+          // 隐私模式或 file:// 禁止存储时照常游戏，只是不续局。
+        }
+      }
+
+      function load() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+          if (!saved) return;
+          if (rules.SIZES.includes(Number(saved.size))) gameSize.value = String(saved.size);
+          if (["480", "560", "640"].includes(saved.zoom)) zoom.value = saved.zoom;
+          if (["pvp", "ai"].includes(saved.mode)) mode.value = saved.mode;
+          if (['free', 'renju'].includes(saved.rule)) ruleSelect.value = saved.rule; // [规则选项] 旧存档没有 rule，按无禁手
+          if (["low", "mid", "high"].includes(saved.level)) level.value = saved.level;
+          // UX: 执子、手数、音效
+          if (["black", "white"].includes(saved.side)) side.value = saved.side;
+          showNumbers = saved.numbers === true;
+          soundOn = saved.sound === true;
+          // 只存落子顺序，重放时由规则层重新判定胜负，避免信任存档里的结果。
+          let restored = rules.newGame(Number(gameSize.value), ruleSelect.value); // [规则选项]
+          for (const move of Array.isArray(saved.moves) ? saved.moves : []) {
+            const next = Array.isArray(move) ? rules.place(restored, move[0], move[1]) : restored;
+            if (next === restored) break;
+            restored = next;
+          }
+          // [规则选项] 存档已结束时也按当前选择器的路数与规则开新局，避免选择器与棋局不一致
+          state = rules.ended(restored) ? rules.newGame(Number(gameSize.value), ruleSelect.value) : restored;
+        } catch {
+          // 存档损坏时直接开新局。
+        }
+      }
+
+      function refresh() {
+        measure();
+        const over = rules.ended(state);
+        const lastMove = state.history[state.history.length - 1];
+        const color = over && lastMove ? lastMove.color : state.turn;
+        // UX: 待确认点失效检查；提示只在其生成时的手数有效
+        if (pending && (!canPlay() || state.board[pending.r][pending.c] !== 0)) pending = null;
+        const hintNow = hintPoint && hintPoint.len === state.history.length && !over ? hintPoint : null;
+        const hintText = hintNow ? `提示：建议落在第${hintNow.r + 1}行第${hintNow.c + 1}列` : "";
+        const pendingText = pending ? `已选第${pending.r + 1}行第${pending.c + 1}列，再点同一点确认落子` : "";
+        turnLabel.textContent = over ? (state.winner ? "获胜方" : "最后执子") : "当前执子";
+        turnText.textContent = color === rules.BLACK ? "黑棋" : "白棋";
+        swatch.classList.toggle("white", color === rules.WHITE);
+        steps.textContent = String(state.history.length);
+        result.textContent = state.winner ? `${color === rules.BLACK ? "黑棋" : "白棋"}获胜！请点击重开。` :
+          state.draw ? "棋盘已满，本局平局。请点击重开。" :
+          errorText || (busy ? "电脑思考中，请稍候…" : pendingText || hintText || "对局进行中");
+        modeHint.textContent = mode.value === "ai" ?
+          `你执${colorName(humanColor())} · 电脑执${colorName(aiColor())}${humanColor() === rules.WHITE ? "（电脑先行）" : ""} · ${LEVEL_NAMES[level.value]}难度` : "双方轮流落子";
+        undoButton.disabled = over || undoCount() <= 0;
+        // UX: 新增控件状态
+        redoButton.disabled = over || !redoStack.length;
+        hintButton.disabled = !canPlay();
+        confirmButton.hidden = !pending;
+        numbersButton.setAttribute("aria-pressed", String(showNumbers));
+        soundButton.setAttribute("aria-pressed", String(soundOn));
+        side.disabled = over || mode.value !== "ai";
+        // 显示尺寸只是视图设置，终局也可调；其余选项会改棋局，结束后禁用。
+        mode.disabled = over;
+        gameSize.disabled = over;
+        // [规则选项] 规则选择器与路数一致：终局后禁用；副标题随规则变化
+        ruleSelect.disabled = over;
+        subtitle.textContent = ruleSelect.value === 'renju' ?
+          '黑棋先行 · 连珠禁手（黑棋禁长连、四四、三三） · 黑恰好五连胜、白五子及以上 · 13／15／19 路可选' :
+          '黑棋先行 · 无禁手 · 五子及以上即胜 · 13／15／19 路可选';
+        level.disabled = over;
+        describeSelection();
+        canvas.style.cursor = canPlay() ? "crosshair" : over ? "default" : "wait";
+        canvas.setAttribute("aria-disabled", String(!canPlay()));
+        redraw();
+        save();
+        rpSync(); // 复盘区块：同步按钮可用性与复盘状态文字
+      }
+
+      function scheduleAI() {
+        if (mode.value !== "ai" || state.turn !== aiColor() || rules.ended(state)) return; // UX: 电脑颜色由 side 决定
+        busy = true;
+        aiController = new AbortController();
+        const ticket = ++version;
+        refresh();
+        ai.chooseMove(state.board, aiColor(), aiController.signal, level.value, state.rule).then(({ move, cancelled }) => {
+          // 取消计算并保留版本守卫，防止已经完成的旧任务覆盖新棋局。
+          if (ticket !== version || cancelled) return;
+          aiController = null;
+          busy = false;
+          if (move) { state = rules.place(state, move.r, move.c); redoStack = []; pending = null; blip(); } // UX
+          refresh();
+        }).catch(() => {
+          if (ticket !== version) return;
+          aiController = null;
+          busy = false;
+          errorText = "电脑未能落子，请悔棋或重开。";
+          refresh();
+        });
+      }
+
+      function play(point) {
+        if (!point || !canPlay()) return;
+        // [规则选项] 点到禁手：不落子，状态栏说明原因
+        if (rules.rejectReason(state, point.r, point.c) === 'forbidden') {
+          errorText = '禁手：' + rules.forbiddenKind(state, point.r, point.c) + '，黑棋不能落在这里。';
+          refresh();
+          return;
+        }
+        const next = rules.place(state, point.r, point.c);
+        if (next === state) return;
+        state = next;
+        redoStack = []; pending = null; blip(); // UX: 新落子清空重做栈与待确认点
+        keyboard = { r: point.r, c: point.c };
+        errorText = "";
+        refresh();
+        scheduleAI();
+      }
+
+      function pointAt(event) {
+        const rect = canvas.getBoundingClientRect();
+        const c = Math.round(((event.clientX - rect.left) * SIDE / rect.width - PADDING) / gap);
+        const r = Math.round(((event.clientY - rect.top) * SIDE / rect.height - PADDING) / gap);
+        return rules.inBoard(state.board, r, c) ? { r, c } : null;
+      }
+
+      function restart() {
+        rpClose(); // 复盘：重开前先退出复盘视图
+        cancelAI();
+        state = rules.newGame(Number(gameSize.value), ruleSelect.value); // [规则选项]
+        errorText = "";
+        hover = null;
+        redoStack = []; pending = null; hintPoint = null; // UX
+        keyboard = center();
+        keyboardMode = false;
+        refresh();
+        scheduleAI(); // UX: 执白时电脑先行
+      }
+
+      function setHover(point) {
+        if (hover?.r === point?.r && hover?.c === point?.c) return;
+        hover = point;
+        redraw();
+      }
+
+      // UX: 记录最近指针类型；触屏/笔走两步落子，鼠标仍一次点击
+      canvas.addEventListener("pointerdown", event => {
+        lastPointerType = event.pointerType === "touch" || event.pointerType === "pen" ? "touch" : "mouse";
+      });
+      canvas.addEventListener("pointermove", event => {
+        if (event.pointerType === "touch" || event.pointerType === "pen") return; // UX
+        if (rules.ended(state)) return;
+        const point = pointAt(event);
+        if (keyboardMode) { keyboardMode = false; redraw(); }
+        if (point) keyboard = point;
+        setHover(point);
+        describeSelection();
+      });
+      canvas.addEventListener("pointerleave", () => setHover(null));
+      canvas.addEventListener("click", event => {
+        if (event.button !== 0) return;
+        const point = pointAt(event);
+        if (lastPointerType === "mouse") { play(point); return; }
+        // UX: 触屏两步：先预览，再点同一点确认，点别处则移动预览
+        if (!point || !canPlay() || state.board[point.r][point.c] !== 0) return;
+        if (pending && pending.r === point.r && pending.c === point.c) { play(point); return; }
+        pending = point;
+        keyboard = { r: point.r, c: point.c };
+        refresh();
+      });
+      canvas.addEventListener("focus", () => {
+        if (rules.ended(state)) return;
+        keyboardMode = true;
+        setHover(keyboard);
+        describeSelection();
+        redraw();
+      });
+      canvas.addEventListener("blur", () => setHover(null));
+      canvas.addEventListener("keydown", event => {
+        if (rules.ended(state)) return;
+        const directions = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+        if (directions[event.key]) {
+          event.preventDefault();
+          const [dr, dc] = directions[event.key];
+          keyboard = {
+            r: Math.max(0, Math.min(state.board.length - 1, keyboard.r + dr)),
+            c: Math.max(0, Math.min(state.board.length - 1, keyboard.c + dc))
+          };
+          hover = keyboard;
+          keyboardMode = true;
+          describeSelection();
+          redraw();
+        } else if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          keyboardMode = true;
+          redraw();
+          if (!event.repeat) play(keyboard);
+        }
+      });
+      undoButton.addEventListener("click", () => {
+        if (rpSession) return; // 复盘中不悔棋
+        if (rules.ended(state) || !state.history.length) return;
+        const count = undoCount(); // UX: 按执子颜色计数，并把撤销的棋压入重做栈
+        if (count <= 0) return;
+        cancelAI();
+        redoStack.push(...state.history.slice(-count).reverse().map(move => ({ r: move.r, c: move.c })));
+        lastUndoCount = count;
+        state = rules.undo(state, count);
+        errorText = "";
+        pending = null;
+        refresh();
+      });
+      // UX: 重做：恢复上次悔棋撤销的步数；人机下若停在电脑回合且栈中还有，则补一步
+      redoButton.addEventListener("click", () => {
+        if (rules.ended(state) || !redoStack.length) return;
+        cancelAI();
+        let left = Math.min(lastUndoCount, redoStack.length);
+        while (left > 0 || (mode.value === "ai" && state.turn !== humanColor() && redoStack.length)) {
+          const move = redoStack.pop();
+          const next = rules.place(state, move.r, move.c);
+          if (next === state) { redoStack = []; break; }
+          state = next;
+          left--;
+          if (rules.ended(state)) break;
+        }
+        errorText = "";
+        pending = null;
+        blip();
+        refresh();
+        scheduleAI();
+      });
+      confirmButton.addEventListener("click", () => { if (pending) play(pending); });
+      numbersButton.addEventListener("click", () => { showNumbers = !showNumbers; refresh(); });
+      soundButton.addEventListener("click", () => { soundOn = !soundOn; refresh(); blip(); });
+      // UX: 提示：对当前执子方用 mid 难度询问 ai.chooseMove，结果只对当前手数有效
+      hintButton.addEventListener("click", async () => {
+        if (!canPlay()) return;
+        const snapshot = state, len = state.history.length, ticket = ++hintTicket;
+        try {
+          const reply = await ai.chooseMove(state.board, state.turn, null, "mid", state.rule);
+          if (ticket !== hintTicket || state !== snapshot || !reply.move) return;
+          hintPoint = { r: reply.move.r, c: reply.move.c, len };
+          refresh();
+        } catch {
+          // 提示失败时忽略。
+        }
+      });
+      restartButton.addEventListener("click", restart);
+      mode.addEventListener("change", restart);
+      side.addEventListener("change", restart); // UX: 换边与换模式一样重开
+      gameSize.addEventListener("change", restart);
+      ruleSelect.addEventListener('change', restart); // [规则选项] 切换规则重新开局
+      // 难度只影响电脑的下一手，可以随时调整，不必重开。
+      level.addEventListener("change", save);
+      zoom.addEventListener("change", () => {
+        document.querySelector("main").style.setProperty("--board-width", zoom.value + "px");
+        resize();
+        save();
+      });
+      // ===== 复盘 / 棋谱 / 分享（新增区块）：只用 rules.newGame / rules.place 重建局面，不改实时 state =====
+      const RP_LEVELS = ["low", "mid", "high"];
+      const rpEl = id => document.getElementById(id);
+      const rpToggle = rpEl("replay-toggle"), rpBar = rpEl("replay-bar"), rpSlider = rpEl("rp-slider");
+      const rpCount = rpEl("rp-count"), rpBranchBtn = rpEl("rp-branch"), ioBox = rpEl("io-box");
+      const ioText = rpEl("io-text"), exportBtn = rpEl("export"), shareBtn = rpEl("share"), importOpen = rpEl("import-open");
+      // 复盘会话 { moves, size, mode, level, external, n, view }；null 表示未复盘。external 为导入或链接打开的外部棋谱。
+      let rpSession = null;
+
+      function rpBuild(size, moves, n) {
+        let g = rules.newGame(size);
+        for (let i = 0; i < n; i++) g = rules.place(g, moves[i][0], moves[i][1]);
+        return g;
+      }
+
+      // 画布绘制入口：复盘时临时以重建局面替换 state 绘制一帧（同步完成，随后还原），实时对局对象不被改写。
+      function drawView() {
+        if (!rpSession) { draw(); return; }
+        const live = state, savedHover = hover, savedKeyboard = keyboardMode;
+        state = rpSession.view; hover = null; keyboardMode = false;
+        measure();
+        try { draw(); } finally { state = live; hover = savedHover; keyboardMode = savedKeyboard; measure(); }
+      }
+
+      function rpRecord() {
+        if (rpSession) return { version: 1, size: rpSession.size, mode: rpSession.mode, level: rpSession.level, moves: rpSession.moves.map(m => [m[0], m[1]]) };
+        return { version: 1, size: state.board.length, mode: mode.value, level: level.value, moves: state.history.map(m => [m.r, m.c]) };
+      }
+
+      // 严格校验：逐手经 rules.place 重放，任何一步被拒绝都整体失败。
+      function rpParse(data) {
+        const fail = message => { throw new Error(message); };
+        if (!data || typeof data !== "object" || Array.isArray(data)) fail("棋谱必须是 JSON 对象。");
+        if (data.version !== 1) fail("不支持的棋谱版本（version 必须为 1）。");
+        if (!rules.SIZES.includes(data.size)) fail("棋盘路数无效（只支持 13、15、19）。");
+        if (data.mode !== "pvp" && data.mode !== "ai") fail("对战模式无效（应为 pvp 或 ai）。");
+        if (!RP_LEVELS.includes(data.level)) fail("难度无效（应为 low、mid 或 high）。");
+        if (!Array.isArray(data.moves)) fail("moves 必须是数组。");
+        if (!data.moves.length) fail("棋谱没有落子。");
+        if (data.moves.length > data.size * data.size) fail("落子数超过棋盘容量。");
+        let g = rules.newGame(data.size);
+        const moves = [];
+        for (const [i, move] of data.moves.entries()) {
+          const no = i + 1;
+          if (!Array.isArray(move) || move.length !== 2 || !Number.isInteger(move[0]) || !Number.isInteger(move[1])) fail(`第 ${no} 手格式错误，应为 [行, 列] 两个整数。`);
+          const r = move[0], c = move[1];
+          if (r < 0 || c < 0 || r >= data.size || c >= data.size) fail(`第 ${no} 手超出棋盘范围。`);
+          if (rules.ended(g)) fail(`第 ${no} 手出现在对局结束之后。`);
+          if (g.board[r][c] !== 0) fail(`第 ${no} 手落在已有棋子的位置。`);
+          const next = rules.place(g, r, c);
+          if (next === g) fail(`第 ${no} 手无法落子。`);
+          g = next;
+          moves.push([r, c]);
+        }
+        return { moves, size: data.size, mode: data.mode, level: data.level };
+      }
+
+      // 链接编码：字节 [路数, 模式位|难度序号, r, c, r, c, ...]，再做 url-safe base64（无填充）。
+      function rpEncode(rec) {
+        const bytes = [rec.size, (rec.mode === "ai" ? 4 : 0) | RP_LEVELS.indexOf(rec.level)];
+        for (const move of rec.moves) bytes.push(move[0], move[1]);
+        let bin = "";
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin).split("+").join("-").split("/").join("_").replace(/=+$/, "");
+      }
+
+      function rpDecode(text) {
+        if (!/^[A-Za-z0-9_-]+$/.test(text)) return null;
+        let bin;
+        try { bin = atob(text.split("-").join("+").split("_").join("/")); } catch { return null; }
+        if (bin.length < 4 || bin.length % 2) return null;
+        const flags = bin.charCodeAt(1), index = flags & 3;
+        if (flags > 7 || index > 2) return null;
+        const moves = [];
+        for (let i = 2; i < bin.length; i += 2) moves.push([bin.charCodeAt(i), bin.charCodeAt(i + 1)]);
+        try {
+          return rpParse({ version: 1, size: bin.charCodeAt(0), mode: flags & 4 ? "ai" : "pvp", level: RP_LEVELS[index], moves });
+        } catch { return null; }
+      }
+
+      // 状态区（aria-live）播报。
+      const rpNote = message => { result.textContent = message; };
+
+      function rpUpdate() {
+        const s = rpSession, total = s.moves.length;
+        s.view = rpBuild(s.size, s.moves, s.n);
+        const last = s.n ? s.view.history[s.n - 1] : null;
+        const over = rules.ended(s.view);
+        const color = over && last ? last.color : s.view.turn;
+        rpSlider.max = String(total);
+        rpSlider.value = String(s.n);
+        rpSlider.setAttribute("aria-valuetext", `第 ${s.n} 手，共 ${total} 手`);
+        rpCount.textContent = `${s.n} / ${total}`;
+        const flag = (id, off) => rpEl(id).setAttribute("aria-disabled", String(off));
+        flag("rp-first", s.n === 0); flag("rp-prev", s.n === 0);
+        flag("rp-next", s.n === total); flag("rp-last", s.n === total);
+        rpBranchBtn.hidden = !(s.n < total || (s.external && !over));
+        turnLabel.textContent = over ? (s.view.winner ? "获胜方" : "最后执子") : "当前执子";
+        turnText.textContent = color === rules.BLACK ? "黑棋" : "白棋";
+        swatch.classList.toggle("white", color === rules.WHITE);
+        steps.textContent = String(s.n);
+        const where = last ? `${last.color === rules.BLACK ? "黑" : "白"}棋 ${last.r + 1} 行 ${last.c + 1} 列` : "空盘";
+        const tail = s.view.winner ? `，${last.color === rules.BLACK ? "黑" : "白"}棋获胜` : s.view.draw ? "，平局" : "";
+        rpNote(`复盘中：第 ${s.n} / ${total} 手（${where}）${tail}`);
+        redraw();
+      }
+
+      // 由 refresh() 末尾调用：同步按钮可用性；复盘中保持复盘视图与状态文字。
+      function rpSync() {
+        const moves = state.history.length;
+        rpToggle.disabled = !rpSession && (moves === 0 || busy);
+        rpToggle.title = !rpSession && busy ? "电脑思考中，暂不能复盘" : "";
+        rpToggle.setAttribute("aria-pressed", String(!!rpSession));
+        exportBtn.disabled = !rpSession && moves === 0;
+        shareBtn.disabled = !rpSession && moves === 0;
+        if (rpSession) {
+          undoButton.disabled = true;
+          canvas.style.cursor = "default";
+          rpUpdate();
+        }
+      }
+
+      function rpEnter(session) {
+        rpSession = session;
+        hover = null;
+        keyboardMode = false;
+        rpBar.hidden = false;
+        rpSync();
+        rpSlider.focus();
+      }
+
+      // 仅收起复盘视图，不刷新界面（重开等流程自己会 refresh）。
+      function rpClose() {
+        rpSession = null;
+        rpBar.hidden = true;
+      }
+
+      function rpExit() {
+        if (!rpSession) return;
+        rpClose();
+        errorText = "已退出复盘，回到当前对局。";
+        refresh();
+        rpToggle.focus();
+      }
+
+      function rpGo(n) {
+        if (!rpSession) return;
+        const target = Math.max(0, Math.min(rpSession.moves.length, n));
+        if (target === rpSession.n) return;
+        rpSession.n = target;
+        rpUpdate();
+      }
+
+      function rpIOOpen(open) {
+        ioBox.hidden = !open;
+        importOpen.setAttribute("aria-expanded", String(open));
+      }
+
+      // 先写剪贴板；失败则展开文本框并选中，供手动复制（不使用 prompt）。
+      async function rpCopy(text, okMessage, label) {
+        try {
+          await navigator.clipboard.writeText(text);
+          rpNote(okMessage);
+          return true;
+        } catch {
+          rpIOOpen(true);
+          ioText.value = text;
+          ioText.focus();
+          ioText.select();
+          rpNote(`无法访问剪贴板：${label}已放入下方文本框，请手动复制。`);
+          return false;
+        }
+      }
+
+      function rpImport(text) {
+        if (!text.trim()) { rpNote("请先粘贴棋谱 JSON 或选择文件。"); return false; }
+        let data;
+        try { data = JSON.parse(text); } catch { rpNote("导入失败：内容不是有效的 JSON。"); return false; }
+        let rec;
+        try { rec = rpParse(data); } catch (error) { rpNote("导入失败：" + error.message); return false; }
+        rpEnter({ ...rec, external: true, n: rec.moves.length });
+        rpIOOpen(false);
+        const end = rpSession.view;
+        const lastColor = end.history[end.history.length - 1].color === rules.BLACK ? "黑" : "白";
+        rpNote(`已导入 ${rec.moves.length} 手棋谱，正在复盘（末步）。` + (end.winner ? `${lastColor}棋获胜。` : end.draw ? "本局平局。" : ""));
+        return true;
+      }
+
+      function rpOpenHash() {
+        const match = /^#g=(.+)$/.exec(location.hash);
+        if (!match) return;
+        const rec = rpDecode(match[1]);
+        if (rec) rpEnter({ ...rec, external: true, n: rec.moves.length });
+      }
+
+      rpToggle.addEventListener("click", () => {
+        if (rpSession) { rpExit(); return; }
+        if (!state.history.length || busy) return;
+        rpEnter({ moves: state.history.map(m => [m.r, m.c]), size: state.board.length, mode: mode.value,
+          level: level.value, external: false, n: state.history.length });
+      });
+      rpEl("rp-first").addEventListener("click", () => rpGo(0));
+      rpEl("rp-prev").addEventListener("click", () => rpSession && rpGo(rpSession.n - 1));
+      rpEl("rp-next").addEventListener("click", () => rpSession && rpGo(rpSession.n + 1));
+      rpEl("rp-last").addEventListener("click", () => rpGo(Infinity));
+      rpEl("rp-exit").addEventListener("click", rpExit);
+      rpSlider.addEventListener("input", () => rpGo(Number(rpSlider.value)));
+      // 复盘条获得焦点时左右方向键翻步；滑块自带方向键行为，这里不重复处理。
+      rpBar.addEventListener("keydown", event => {
+        if (!rpSession || event.target === rpSlider || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (event.key === "ArrowLeft") { event.preventDefault(); rpGo(rpSession.n - 1); }
+        else if (event.key === "ArrowRight") { event.preventDefault(); rpGo(rpSession.n + 1); }
+        else if (event.key === "Home") { event.preventDefault(); rpGo(0); }
+        else if (event.key === "End") { event.preventDefault(); rpGo(Infinity); }
+      });
+      // 从此处继续：先取消可能运行的 AI，再把实时对局截断到当前复盘位置。
+      rpBranchBtn.addEventListener("click", () => {
+        const s = rpSession;
+        if (!s) return;
+        cancelAI();
+        const next = s.view;
+        if (s.external) { mode.value = s.mode; level.value = s.level; gameSize.value = String(s.size); }
+        rpClose();
+        state = next;
+        errorText = `已从第 ${s.n} 手继续对局。`;
+        hover = null;
+        keyboardMode = false;
+        const last = next.history[next.history.length - 1];
+        keyboard = last ? { r: last.r, c: last.c } : center();
+        refresh();
+        scheduleAI();
+        canvas.focus();
+      });
+      exportBtn.addEventListener("click", async () => {
+        const rec = rpRecord();
+        if (!rec.moves.length) return;
+        await rpCopy(JSON.stringify(rec), `棋谱已复制到剪贴板（${rec.moves.length} 手）。`, "棋谱");
+      });
+      shareBtn.addEventListener("click", async () => {
+        const rec = rpRecord();
+        if (!rec.moves.length) return;
+        await rpCopy(location.href.split("#")[0] + "#g=" + rpEncode(rec), "复盘链接已复制到剪贴板。", "链接");
+      });
+      importOpen.addEventListener("click", () => {
+        const open = ioBox.hidden;
+        rpIOOpen(open);
+        if (open) ioText.focus();
+      });
+      rpEl("io-close").addEventListener("click", () => { rpIOOpen(false); importOpen.focus(); });
+      rpEl("io-apply").addEventListener("click", () => rpImport(ioText.value));
+      rpEl("io-download").addEventListener("click", () => {
+        const rec = rpRecord();
+        if (!rec.moves.length) { rpNote("还没有落子，没有棋谱可下载。"); return; }
+        const url = URL.createObjectURL(new Blob([JSON.stringify(rec)], { type: "application/json" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `gomoku-${rec.size}-${rec.moves.length}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        rpNote(`已下载棋谱（${rec.moves.length} 手）。`);
+      });
+      rpEl("io-file").addEventListener("change", async event => {
+        const input = event.target, file = input.files && input.files[0];
+        if (!file) return;
+        try {
+          if (file.size > 1048576) throw new Error("文件过大（超过 1 MB）。");
+          const text = await file.text();
+          ioText.value = text;
+          rpImport(text);
+        } catch (error) {
+          rpNote("导入失败：" + (error.message || "无法读取文件。"));
+        }
+        input.value = "";
+      });
+      window.addEventListener("hashchange", rpOpenHash);
+
+      new ResizeObserver(resize).observe(canvas);
+      window.addEventListener("resize", resize);
+      load();
+      document.querySelector("main").style.setProperty("--board-width", zoom.value + "px");
+      keyboard = center();
+      resize();
+      refresh();
+      rpOpenHash(); // 分享链接 #g=...：有效则以复盘模式打开，无效则静默忽略
+      scheduleAI();
+    })();
+
+    if (location.hash === "#self-test") {
+      runSelfChecks().then(report => console.info(report.message, report))
+        .catch(error => console.error("自检失败", error));
+    }
+  </script>
+</body>
+</html>
