@@ -9,12 +9,12 @@
     :root {
       color-scheme: light dark;
       --page: #f4f0e8; --ink: #342c20; --muted: #74644e; --line: #ddd1bd; --line2: #b7a58a;
-      --control: #fffaf1; --control-hover: #eee2cf; --panel: #fffaf2; --on: #e6d3b0;
+      --control: #fffaf1; --control-hover: #eee2cf; --panel: #fffaf2; --on: #e6d3b0; --accent: #5e4830;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --page: #1d1a16; --ink: #e9e1d3; --muted: #b3a58f; --line: #3d352b; --line2: #6b5d49;
-        --control: #2b251e; --control-hover: #3a3228; --panel: #26211b; --on: #4a3c2a;
+        --control: #2b251e; --control-hover: #3a3228; --panel: #26211b; --on: #4a3c2a; --accent: #c9a46b;
       }
     }
     * { box-sizing: border-box; }
@@ -96,14 +96,14 @@
     /* ===== 复盘 / 棋谱 / 分享（新增，自成一块，选择器均限定在新元素上；[hidden] 规则已由 UX 块提供） ===== */
     .replay { margin-top: 16px; }
     .replay-actions { flex-wrap: wrap; }
-    .replay-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid #ddd1bd; border-radius: 10px; background: #fffaf2; }
-    .replay-bar input[type="range"] { flex: 1 1 160px; min-width: 120px; min-height: 40px; accent-color: #5e4830; }
+    .replay-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .replay-bar input[type="range"] { flex: 1 1 160px; min-width: 120px; min-height: 40px; accent-color: var(--accent); }
     #rp-count { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
     .replay button[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
-    .replay button[aria-disabled="true"]:hover { background: #fffaf1; }
-    .replay button[aria-pressed="true"] { background: #eee2cf; border-color: #5e4830; }
+    .replay button[aria-disabled="true"]:hover { background: var(--control); }
+    .replay button[aria-pressed="true"] { background: var(--control-hover); border-color: var(--accent); }
     .io-box { display: grid; gap: 8px; margin-top: 12px; font-size: 14px; }
-    .io-box textarea { width: 100%; min-height: 96px; padding: 8px 10px; border: 1px solid #b7a58a; border-radius: 8px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; color: inherit; background: #fffaf1; resize: vertical; }
+    .io-box textarea { width: 100%; min-height: 96px; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 8px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; color: inherit; background: var(--control); resize: vertical; }
     .io-box .buttons { flex-wrap: wrap; align-items: center; }
     .file-pick input { max-width: 220px; font-size: 13px; }
   </style>
