@@ -913,7 +913,13 @@
           return { vcf: toPoint(f), vct: toPoint(t) };
         }
 
-        return { search, probe, LEVELS };
+        // 测试钩子（只读、不影响搜索）：在 flat 局面上计算 (r, c) 沿 (dr, dc) 的棋型编号。
+        function shapeAt(size, flat, r, c, dr, dc, color) {
+          init(size, flat, []);
+          return shape(r, c, dr, dc, color);
+        }
+
+        return { search, probe, shapeAt, LEVELS };
       }
 
       const local = createEngine();
@@ -1005,7 +1011,10 @@
       // 主线程同步的威胁空间探测（不经 Worker），供自检与测试使用。
       const probe = (board, color, ms = 300) => local.probe(board.length, flatten(board), color, ms);
 
-      return { chooseMove, probe, settings, LEVELS: local.LEVELS };
+      // 自检用：引擎副本的棋型编号（与 rules.shape 的 kind 对照），不参与对局。
+      const engineShape = (board, r, c, dr, dc, color) => local.shapeAt(board.length, flatten(board), r, c, dr, dc, color);
+
+      return { chooseMove, probe, settings, LEVELS: local.LEVELS, engineShape };
     })();
 
     // 地址末尾加 #self-test 可重复运行；平时不执行测试或增加启动负担。
@@ -1092,7 +1101,20 @@
       assert(rules.place(one, 0, 0) === one && fresh.board[0][0] === 0, "占用忽略且不修改原状态");
       const back = rules.undo(one, 2);
       assert(back.history.length === 0 && back.turn === rules.BLACK && back.board[0][0] === 0, "不足两步撤销");
-      let shapeCases = 0;
+      let shapeCases = 0, engineCases = 0;
+      // 引擎只返回棋型编号：冲四/跳四同号，活三/跳三同号。
+      const KIND_CODE = { "其他": 0, "眠二": 1, "活二": 2, "眠三": 3, "活三": 4, "跳三": 4, "冲四": 5, "跳四": 5, "活四": 6, "连五": 7 };
+      const compareEngine = (board, r, c, dr, dc, color, label) => {
+        const got = rules.shape(board, r, c, dr, dc, color);
+        if (!got) return;
+        const want = KIND_CODE[got.kind], have = ai.engineShape(board, r, c, dr, dc, color);
+        if (want !== have) {
+          throw new Error("规则自检失败：引擎棋型与 rules.shape 不一致 " + label + " 位置 r=" + r + " c=" + c +
+            " 方向[" + dr + "," + dc + "] 颜色 " + color + " rules=" + got.kind + "(" + want + ") 引擎=" + have +
+            " 棋盘 " + JSON.stringify(board.map(row => row.join(""))));
+        }
+        engineCases++;
+      };
       for (const [pattern, kind] of [
         ["#.XX.#", "其他"], ["#.XXX.#", "眠三"], [".XXXX.", "活四"],
         ["#XXXX.", "冲四"], [".XX.XX.", "跳四"], [".X.XXX.", "跳四"],
@@ -1110,6 +1132,7 @@
               }
               board[7][7] = 0;
               assert(rules.shape(board, 7, 7, dr, dc, color).kind === kind, "棋型 " + pattern);
+              compareEngine(board, 7, 7, dr, dc, color, "棋型表 " + pattern);
               shapeCases++;
             }
           }
@@ -1148,6 +1171,42 @@
           }
           assert(filled.history.length === size * size && filled.draw === !winning &&
             filled.winner === (winning ? rules.BLACK : 0), size + "路满盘判平且胜利优先");
+        }
+      }
+      // 引擎副本与 rules.shape 一致性：固定种子的随机合法局面，13/15/19 路，所有点、四个方向、双方颜色。
+      let randomBoards = 0;
+      {
+        let seed = 20261107;
+        const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+        for (const size of rules.SIZES) {
+          for (let g = 0; g < 40; g++) {
+            let s = rules.newGame(size, "free");
+            const stones = [], target = 4 + Math.floor(rnd() * size * size * 0.5);
+            while (s.history.length < target && !rules.ended(s)) {
+              let r, c;
+              if (stones.length && rnd() < 0.8) {
+                const [sr, sc] = stones[Math.floor(rnd() * stones.length)];
+                r = sr + Math.floor(rnd() * 5) - 2;
+                c = sc + Math.floor(rnd() * 5) - 2;
+              } else {
+                r = Math.floor(rnd() * size);
+                c = Math.floor(rnd() * size);
+              }
+              if (!rules.inBoard(s.board, r, c) || s.board[r][c] !== 0) continue;
+              s = rules.place(s, r, c);
+              stones.push([r, c]);
+            }
+            randomBoards++;
+            for (let r = 0; r < size; r++) {
+              for (let c = 0; c < size; c++) {
+                for (const [dr, dc] of rules.DIRECTIONS) {
+                  for (const color of [rules.BLACK, rules.WHITE]) {
+                    compareEngine(s.board, r, c, dr, dc, color, "随机局面 " + size + "路#" + g);
+                  }
+                }
+              }
+            }
+          }
         }
       }
       let reply = await ai.chooseMove(fresh.board, rules.WHITE);
@@ -1226,7 +1285,7 @@
       setTimeout(() => slow.abort(), 60);
       reply = await running;
       assert(reply.cancelled && reply.move === null && performance.now() - t1 < 400, "搜索中取消");
-      return { shapeCases, message: "规则、棋型与AI回归自检通过" };
+      return { shapeCases, engineCases, randomBoards, message: "规则、棋型与AI回归自检通过" };
     }
 
     // 第三层：界面。棋盘写入只能通过 rules.place / rules.undo / rules.newGame。
